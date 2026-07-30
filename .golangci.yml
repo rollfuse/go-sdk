@@ -1,0 +1,62 @@
+version: "2"
+
+run:
+    timeout: 3m
+    tests: true
+    go: "1.26"
+
+linters:
+    disable:
+        - depguard
+        - nonamedreturns
+        - exhaustruct
+        - ireturn
+
+    enable:
+        - wsl_v5
+        - revive
+        - nlreturn
+
+    settings:
+        wsl_v5:
+            branch-max-lines: 5
+            disable:
+                - inc-dec
+
+        revive:
+            enable-all-rules: false
+            rules:
+                - name: package-comments
+                  severity: warning
+                  exclude: [""]
+
+        nlreturn:
+            block-size: 3
+
+        varnamelen:
+            max-distance: 5
+            min-name-length: 3
+            ignore-names:
+                - id
+            ignore-decls:
+                - w http.ResponseWriter
+                - r *http.Request
+                - r pgx.Row
+                - tx pgx.Tx
+
+        tagliatelle:
+            case:
+                rules:
+                    json: snake
+
+formatters:
+    enable:
+        - gci
+        - gofmt
+        - gofumpt
+        - goimports
+
+issues:
+    max-issues-per-linter: 0
+    max-same-issues: 0
+    whole-files: true
