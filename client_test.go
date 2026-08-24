@@ -1,4 +1,4 @@
-package growthops_test
+package rollfuse_test
 
 import (
 	"context"
@@ -12,13 +12,13 @@ import (
 	"testing"
 	"time"
 
-	growthops "github.com/jeanmolossi/growth-ops/packages/sdk-go"
+	rollfuse "github.com/jeanmolossi/rollfuse/packages/sdk-go"
 )
 
-func testConfigurationServer(t *testing.T, flag growthops.FlagConfig, version int64) *httptest.Server {
+func testConfigurationServer(t *testing.T, flag rollfuse.FlagConfig, version int64) *httptest.Server {
 	t.Helper()
 
-	cfg := growthops.Configuration{EnvironmentID: "env_1", Version: version, Flags: []growthops.FlagConfig{flag}}
+	cfg := rollfuse.Configuration{EnvironmentID: "env_1", Version: version, Flags: []rollfuse.FlagConfig{flag}}
 
 	body, err := json.Marshal(cfg)
 	if err != nil {
@@ -39,27 +39,27 @@ func testConfigurationServer(t *testing.T, flag growthops.FlagConfig, version in
 	}))
 }
 
-func matchedFlag() growthops.FlagConfig {
-	return growthops.FlagConfig{
+func matchedFlag() rollfuse.FlagConfig {
+	return rollfuse.FlagConfig{
 		FlagKey:          "checkout-redesign",
 		Enabled:          true,
 		DefaultVariation: "off",
-		Variations: []growthops.Variation{
+		Variations: []rollfuse.Variation{
 			{Key: "on", Value: json.RawMessage(`true`)},
 			{Key: "off", Value: json.RawMessage(`false`)},
 		},
-		Rules: []growthops.Rule{
+		Rules: []rollfuse.Rule{
 			{
-				Conditions: []growthops.Condition{{Attribute: "plan", Value: "enterprise"}},
-				Outcome:    growthops.Outcome{VariationKey: "on"},
+				Conditions: []rollfuse.Condition{{Attribute: "plan", Value: "enterprise"}},
+				Outcome:    rollfuse.Outcome{VariationKey: "on"},
 			},
 		},
 	}
 }
 
 func TestClient_ExplicitCredentialConfiguration(t *testing.T) {
-	_, err := growthops.NewClient("http://api.test", "")
-	if !errors.Is(err, growthops.ErrCredentialRequired) {
+	_, err := rollfuse.NewClient("http://api.test", "")
+	if !errors.Is(err, rollfuse.ErrCredentialRequired) {
 		t.Fatalf("expected ErrCredentialRequired, got %v", err)
 	}
 }
@@ -68,14 +68,14 @@ func TestClient_SafeFallback_NoCacheYetWithFallback(t *testing.T) {
 	server := testConfigurationServer(t, matchedFlag(), 1)
 	defer server.Close()
 
-	client, err := growthops.NewClient(server.URL, "cred")
+	client, err := rollfuse.NewClient(server.URL, "cred")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	defer func() { _ = client.Close() }()
 
 	// Start not called: no Configuration cached yet.
-	result, err := client.Evaluate("user_1", "checkout-redesign", growthops.WithFallback("fallback-value"))
+	result, err := client.Evaluate("user_1", "checkout-redesign", rollfuse.WithFallback("fallback-value"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestClient_SafeFallback_NoCacheYetWithFallback(t *testing.T) {
 		t.Fatalf("unexpected error unmarshaling fallback value: %v", err)
 	}
 
-	if value != "fallback-value" || result.Reason != growthops.ReasonDefaultFallback || result.TrackExposure {
+	if value != "fallback-value" || result.Reason != rollfuse.ReasonDefaultFallback || result.TrackExposure {
 		t.Fatalf("unexpected result: %+v", result)
 	}
 }
@@ -94,14 +94,14 @@ func TestClient_SafeFallback_NoCacheYetNoFallback(t *testing.T) {
 	server := testConfigurationServer(t, matchedFlag(), 1)
 	defer server.Close()
 
-	client, err := growthops.NewClient(server.URL, "cred")
+	client, err := rollfuse.NewClient(server.URL, "cred")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	defer func() { _ = client.Close() }()
 
 	_, err = client.Evaluate("user_1", "checkout-redesign")
-	if !errors.Is(err, growthops.ErrConfigNotReady) {
+	if !errors.Is(err, rollfuse.ErrConfigNotReady) {
 		t.Fatalf("expected ErrConfigNotReady, got %v", err)
 	}
 }
@@ -110,14 +110,14 @@ func TestClient_EvaluateAll_NoCacheYet(t *testing.T) {
 	server := testConfigurationServer(t, matchedFlag(), 1)
 	defer server.Close()
 
-	client, err := growthops.NewClient(server.URL, "cred")
+	client, err := rollfuse.NewClient(server.URL, "cred")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	defer func() { _ = client.Close() }()
 
 	_, err = client.EvaluateAll("user_1")
-	if !errors.Is(err, growthops.ErrConfigNotReady) {
+	if !errors.Is(err, rollfuse.ErrConfigNotReady) {
 		t.Fatalf("expected ErrConfigNotReady, got %v", err)
 	}
 }
@@ -126,7 +126,7 @@ func TestClient_UnknownFlagKey(t *testing.T) {
 	server := testConfigurationServer(t, matchedFlag(), 1)
 	defer server.Close()
 
-	client, err := growthops.NewClient(server.URL, "cred")
+	client, err := rollfuse.NewClient(server.URL, "cred")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestClient_UnknownFlagKey(t *testing.T) {
 	}
 
 	_, err = client.Evaluate("user_1", "does-not-exist")
-	if !errors.Is(err, growthops.ErrFlagNotFound) {
+	if !errors.Is(err, rollfuse.ErrFlagNotFound) {
 		t.Fatalf("expected ErrFlagNotFound, got %v", err)
 	}
 }
@@ -148,10 +148,10 @@ func TestClient_UnknownFlagKey(t *testing.T) {
 func TestClient_FailureIsolation_KeepsServingAfterRefreshFailure(t *testing.T) {
 	var requestCount atomic.Int32
 
-	cfg := growthops.Configuration{
+	cfg := rollfuse.Configuration{
 		EnvironmentID: "env_1",
 		Version:       1,
-		Flags:         []growthops.FlagConfig{matchedFlag()},
+		Flags:         []rollfuse.FlagConfig{matchedFlag()},
 	}
 	body, _ := json.Marshal(cfg)
 
@@ -173,7 +173,7 @@ func TestClient_FailureIsolation_KeepsServingAfterRefreshFailure(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := growthops.NewClient(server.URL, "cred", growthops.WithRefreshInterval(20*time.Millisecond))
+	client, err := rollfuse.NewClient(server.URL, "cred", rollfuse.WithRefreshInterval(20*time.Millisecond))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -188,12 +188,12 @@ func TestClient_FailureIsolation_KeepsServingAfterRefreshFailure(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond) // let at least one refresh fail
 
-	result, err := client.Evaluate("user_1", "checkout-redesign", growthops.WithAttributes(map[string]string{"plan": "enterprise"}))
+	result, err := client.Evaluate("user_1", "checkout-redesign", rollfuse.WithAttributes(map[string]string{"plan": "enterprise"}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if result.VariationKey != "on" || result.Reason != growthops.ReasonRuleMatch {
+	if result.VariationKey != "on" || result.Reason != rollfuse.ReasonRuleMatch {
 		t.Fatalf("unexpected result after refresh failure: %+v", result)
 	}
 }
@@ -206,7 +206,7 @@ func TestClient_Evaluate_DoesNotPerformNetworkRequest(t *testing.T) {
 			configRequests.Add(1)
 		}
 
-		cfg := growthops.Configuration{EnvironmentID: "env_1", Version: 1, Flags: []growthops.FlagConfig{matchedFlag()}}
+		cfg := rollfuse.Configuration{EnvironmentID: "env_1", Version: 1, Flags: []rollfuse.FlagConfig{matchedFlag()}}
 
 		body, _ := json.Marshal(cfg)
 
@@ -215,7 +215,7 @@ func TestClient_Evaluate_DoesNotPerformNetworkRequest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := growthops.NewClient(server.URL, "cred")
+	client, err := rollfuse.NewClient(server.URL, "cred")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestClient_Evaluate_DoesNotPerformNetworkRequest(t *testing.T) {
 
 	before := configRequests.Load()
 
-	if _, err := client.Evaluate("user_1", "checkout-redesign", growthops.WithAttributes(map[string]string{"plan": "enterprise"})); err != nil {
+	if _, err := client.Evaluate("user_1", "checkout-redesign", rollfuse.WithAttributes(map[string]string{"plan": "enterprise"})); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -244,7 +244,7 @@ func TestClient_ExposureReporting_EnqueuesAndSubmitsRuleMatch(t *testing.T) {
 
 	exposureCh := make(chan []byte, 10)
 
-	cfg := growthops.Configuration{EnvironmentID: "env_1", Version: 5, Flags: []growthops.FlagConfig{matchedFlag()}}
+	cfg := rollfuse.Configuration{EnvironmentID: "env_1", Version: 5, Flags: []rollfuse.FlagConfig{matchedFlag()}}
 	cfgBody, _ := json.Marshal(cfg)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -268,7 +268,7 @@ func TestClient_ExposureReporting_EnqueuesAndSubmitsRuleMatch(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := growthops.NewClient(server.URL, "cred", growthops.WithExposureBatchSize(1))
+	client, err := rollfuse.NewClient(server.URL, "cred", rollfuse.WithExposureBatchSize(1))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -281,7 +281,7 @@ func TestClient_ExposureReporting_EnqueuesAndSubmitsRuleMatch(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	result, err := client.Evaluate("user_1", "checkout-redesign", growthops.WithAttributes(map[string]string{"plan": "enterprise"}))
+	result, err := client.Evaluate("user_1", "checkout-redesign", rollfuse.WithAttributes(map[string]string{"plan": "enterprise"}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -316,14 +316,14 @@ func TestClient_ExposureReporting_EnqueuesAndSubmitsRuleMatch(t *testing.T) {
 func TestClient_ExposureReporting_DefaultResultNeverEnqueues(t *testing.T) {
 	var exposureRequests atomic.Int32
 
-	flag := growthops.FlagConfig{
+	flag := rollfuse.FlagConfig{
 		FlagKey:          "always-off",
 		Enabled:          false,
 		DefaultVariation: "off",
-		Variations:       []growthops.Variation{{Key: "off", Value: json.RawMessage(`false`)}},
+		Variations:       []rollfuse.Variation{{Key: "off", Value: json.RawMessage(`false`)}},
 	}
 
-	cfg := growthops.Configuration{EnvironmentID: "env_1", Version: 1, Flags: []growthops.FlagConfig{flag}}
+	cfg := rollfuse.Configuration{EnvironmentID: "env_1", Version: 1, Flags: []rollfuse.FlagConfig{flag}}
 	cfgBody, _ := json.Marshal(cfg)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -341,7 +341,7 @@ func TestClient_ExposureReporting_DefaultResultNeverEnqueues(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := growthops.NewClient(server.URL, "cred", growthops.WithExposureBatchSize(1))
+	client, err := rollfuse.NewClient(server.URL, "cred", rollfuse.WithExposureBatchSize(1))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -378,11 +378,11 @@ func TestClient_ExposureReporting_FullQueueDropsAndReports(t *testing.T) {
 
 	var dropped atomic.Int32
 
-	client, err := growthops.NewClient(
+	client, err := rollfuse.NewClient(
 		server.URL, "cred",
-		growthops.WithExposureQueueCapacity(1),
-		growthops.WithExposureBatchSize(1_000_000), // never auto-flush during this test
-		growthops.WithOnExposureDropped(func(n int) { dropped.Add(int32(n)) }),
+		rollfuse.WithExposureQueueCapacity(1),
+		rollfuse.WithExposureBatchSize(1_000_000), // never auto-flush during this test
+		rollfuse.WithOnExposureDropped(func(n int) { dropped.Add(int32(n)) }),
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -396,7 +396,7 @@ func TestClient_ExposureReporting_FullQueueDropsAndReports(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	attrs := growthops.WithAttributes(map[string]string{"plan": "enterprise"})
+	attrs := rollfuse.WithAttributes(map[string]string{"plan": "enterprise"})
 
 	if _, err := client.Evaluate("user_1", "checkout-redesign", attrs); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -412,7 +412,7 @@ func TestClient_ExposureReporting_FullQueueDropsAndReports(t *testing.T) {
 }
 
 func TestClient_ExposureReporting_SubmitFailureDoesNotAffectPastResult(t *testing.T) {
-	cfg := growthops.Configuration{EnvironmentID: "env_1", Version: 1, Flags: []growthops.FlagConfig{matchedFlag()}}
+	cfg := rollfuse.Configuration{EnvironmentID: "env_1", Version: 1, Flags: []rollfuse.FlagConfig{matchedFlag()}}
 	cfgBody, _ := json.Marshal(cfg)
 
 	submitErrCh := make(chan error, 5)
@@ -430,10 +430,10 @@ func TestClient_ExposureReporting_SubmitFailureDoesNotAffectPastResult(t *testin
 	}))
 	defer server.Close()
 
-	client, err := growthops.NewClient(
+	client, err := rollfuse.NewClient(
 		server.URL, "cred",
-		growthops.WithExposureBatchSize(1),
-		growthops.WithOnExposureSubmitError(func(err error) { submitErrCh <- err }),
+		rollfuse.WithExposureBatchSize(1),
+		rollfuse.WithOnExposureSubmitError(func(err error) { submitErrCh <- err }),
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -447,7 +447,7 @@ func TestClient_ExposureReporting_SubmitFailureDoesNotAffectPastResult(t *testin
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	result, err := client.Evaluate("user_1", "checkout-redesign", growthops.WithAttributes(map[string]string{"plan": "enterprise"}))
+	result, err := client.Evaluate("user_1", "checkout-redesign", rollfuse.WithAttributes(map[string]string{"plan": "enterprise"}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -460,7 +460,7 @@ func TestClient_ExposureReporting_SubmitFailureDoesNotAffectPastResult(t *testin
 
 	// The result already returned synchronously by Evaluate is unaffected
 	// by the later, asynchronous submission failure.
-	if result.VariationKey != "on" || result.Reason != growthops.ReasonRuleMatch {
+	if result.VariationKey != "on" || result.Reason != rollfuse.ReasonRuleMatch {
 		t.Fatalf("unexpected result: %+v", result)
 	}
 }
@@ -473,7 +473,7 @@ func TestClient_ConcurrentEvaluate(t *testing.T) {
 	server := testConfigurationServer(t, matchedFlag(), 1)
 	defer server.Close()
 
-	client, err := growthops.NewClient(server.URL, "cred", growthops.WithRefreshInterval(5*time.Millisecond))
+	client, err := rollfuse.NewClient(server.URL, "cred", rollfuse.WithRefreshInterval(5*time.Millisecond))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -503,7 +503,7 @@ func TestClient_ConcurrentEvaluate(t *testing.T) {
 				default:
 				}
 
-				if _, err := client.Evaluate("user", "checkout-redesign", growthops.WithAttributes(map[string]string{"plan": "enterprise"})); err != nil {
+				if _, err := client.Evaluate("user", "checkout-redesign", rollfuse.WithAttributes(map[string]string{"plan": "enterprise"})); err != nil {
 					t.Errorf("unexpected error: %v", err)
 
 					return

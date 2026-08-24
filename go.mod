@@ -1,3 +1,3 @@
-module github.com/jeanmolossi/growth-ops/packages/sdk-go
+module github.com/jeanmolossi/rollfuse/packages/sdk-go
 
 go 1.26.6

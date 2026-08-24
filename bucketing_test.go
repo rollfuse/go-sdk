@@ -1,21 +1,21 @@
-package growthops_test
+package rollfuse_test
 
 import (
 	"encoding/json"
 	"os"
 	"testing"
 
-	growthops "github.com/jeanmolossi/growth-ops/packages/sdk-go"
+	rollfuse "github.com/jeanmolossi/rollfuse/packages/sdk-go"
 )
 
 // TestBucket_Deterministic exercises tasks.md 2.2's stability half: the
 // same (flagKey, subjectKey) pair must always bucket identically, across
 // repeated calls, regardless of call order.
 func TestBucket_Deterministic(t *testing.T) {
-	first := growthops.Bucket("checkout-redesign", "user_123")
+	first := rollfuse.Bucket("checkout-redesign", "user_123")
 
 	for i := 0; i < 100; i++ {
-		if got := growthops.Bucket("checkout-redesign", "user_123"); got != first {
+		if got := rollfuse.Bucket("checkout-redesign", "user_123"); got != first {
 			t.Fatalf("expected stable bucket %d, got %d on call %d", first, got, i)
 		}
 	}
@@ -30,8 +30,8 @@ func TestBucket_IndependentAcrossFlags(t *testing.T) {
 	for i := 0; i < 50; i++ {
 		subject := "user_" + string(rune('a'+i))
 
-		bucketA := growthops.Bucket("flag-a", subject)
-		bucketB := growthops.Bucket("flag-b", subject)
+		bucketA := rollfuse.Bucket("flag-a", subject)
+		bucketB := rollfuse.Bucket("flag-b", subject)
 
 		if bucketA != bucketB {
 			differs = true
@@ -50,7 +50,7 @@ func TestBucket_WithinRange(t *testing.T) {
 	for i := 0; i < 200; i++ {
 		subject := "subject-" + string(rune('a'+i%26)) + string(rune('0'+i%10))
 
-		bucket := growthops.Bucket("some-flag", subject)
+		bucket := rollfuse.Bucket("some-flag", subject)
 		if bucket >= 10000 {
 			t.Fatalf("expected bucket in [0, 10000), got %d", bucket)
 		}
@@ -91,7 +91,7 @@ func TestBucket_GoldenVectors(t *testing.T) {
 	}
 
 	for _, v := range vectors {
-		if got := growthops.Bucket(v.FlagKey, v.SubjectKey); got != v.Bucket {
+		if got := rollfuse.Bucket(v.FlagKey, v.SubjectKey); got != v.Bucket {
 			t.Errorf("Bucket(%q, %q) = %d, want %d (fixture drifted from Bucket()'s current output)", v.FlagKey, v.SubjectKey, got, v.Bucket)
 		}
 	}

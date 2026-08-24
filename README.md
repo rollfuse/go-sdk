@@ -1,6 +1,11 @@
-# github.com/jeanmolossi/growth-ops/packages/sdk-go
+# github.com/jeanmolossi/rollfuse/packages/sdk-go
 
-The Go SDK for the Growth Operations Platform: evaluates feature flags
+> **Renamed from `github.com/jeanmolossi/growth-ops/packages/sdk-go`.** The
+> module path and package identifier changed from `growthops` to
+> `rollfuse` — update your import path and, if you aliased the import,
+> the identifier you call it by. The client's behavior did not change.
+
+The Go SDK for rollfuse: evaluates feature flags
 locally against cached, versioned configuration (ADR 0004: Evaluate Flags
 Locally in SDKs), instead of calling the API synchronously on every
 evaluation.
@@ -14,16 +19,16 @@ idiomatic Go rather than as a direct port.
 ## Install
 
 ```bash
-go get github.com/jeanmolossi/growth-ops/packages/sdk-go
+go get github.com/jeanmolossi/rollfuse/packages/sdk-go
 ```
 
 ## Usage
 
 ```go
-import growthops "github.com/jeanmolossi/growth-ops/packages/sdk-go"
+import rollfuse "github.com/jeanmolossi/rollfuse/packages/sdk-go"
 
-client, err := growthops.NewClient(
-    "https://api.growth-ops.example",
+client, err := rollfuse.NewClient(
+    "https://api.rollfuse.com",
     os.Getenv("GROWTH_OPS_CREDENTIAL"), // read wherever you keep secrets; the SDK never reads it itself
 )
 if err != nil {
@@ -39,8 +44,8 @@ if err := client.Start(context.Background()); err != nil {
 }
 
 result, err := client.Evaluate("user_123", "checkout-redesign",
-    growthops.WithAttributes(map[string]string{"plan": "enterprise"}),
-    growthops.WithFallback(false), // used only if no Configuration is cached yet
+    rollfuse.WithAttributes(map[string]string{"plan": "enterprise"}),
+    rollfuse.WithFallback(false), // used only if no Configuration is cached yet
 )
 if err != nil {
     // handle error (ErrConfigNotReady, ErrFlagNotFound)

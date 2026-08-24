@@ -1,4 +1,4 @@
-// Package growthops is the Go SDK for the Growth Operations Platform: it
+// Package rollfuse is the Go SDK for rollfuse: it
 // evaluates feature flags locally against cached, versioned configuration
 // (ADR 0004: Evaluate Flags Locally in SDKs), instead of calling the API
 // synchronously on every evaluation.
@@ -11,7 +11,7 @@
 //
 // # Usage
 //
-//	client, err := growthops.NewClient(baseURL, credential)
+//	client, err := rollfuse.NewClient(baseURL, credential)
 //	if err != nil {
 //		// handle error
 //	}
@@ -23,8 +23,8 @@
 //	defer client.Close()
 //
 //	result, err := client.Evaluate(subjectKey, "checkout-redesign",
-//		growthops.WithAttributes(map[string]string{"plan": "enterprise"}),
-//		growthops.WithFallback(false),
+//		rollfuse.WithAttributes(map[string]string{"plan": "enterprise"}),
+//		rollfuse.WithFallback(false),
 //	)
 //
 // Evaluate/EvaluateAll are synchronous and safe for concurrent use by
@@ -36,4 +36,4 @@
 // Call Close when done to stop background polling/flushing and submit any
 // remaining queued exposures; leaving a Client running past its useful
 // lifetime leaks its background goroutines.
-package growthops
+package rollfuse
