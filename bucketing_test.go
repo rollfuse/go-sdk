@@ -59,13 +59,16 @@ func TestBucket_WithinRange(t *testing.T) {
 
 // bucketingGoldenVectorsPath points at the fixture add-sdk-js's tasks.md
 // 1.1 generated once from apps/api's own Bucket() and checked in for
-// every SDK to reproduce bit-for-bit — packages/sdk-js consumes the same
-// file. This is the cross-implementation parity contract described in
-// design.md: if a future edit to any of the three implementations (API,
-// sdk-js, sdk-go) ever changes its output for any of these vectors, this
-// test fails here, and the equivalent tests fail identically in the other
-// two, so no implementation can silently drift from the others.
-const bucketingGoldenVectorsPath = "../sdk-js/test/fixtures/bucketing-vectors.json"
+// every SDK to reproduce bit-for-bit — packages/evaluation-core
+// (extracted from packages/sdk-js by add-public-client-credential; both
+// packages/sdk-js and packages/sdk-browser depend on it) consumes the
+// same file. This is the cross-implementation parity contract described
+// in design.md: if a future edit to any of the implementations (API,
+// evaluation-core, sdk-go) ever changes its output for any of these
+// vectors, this test fails here, and the equivalent tests fail
+// identically in the others, so no implementation can silently drift
+// from the others.
+const bucketingGoldenVectorsPath = "../evaluation-core/test/fixtures/bucketing-vectors.json"
 
 type bucketingGoldenVector struct {
 	FlagKey    string `json:"flag_key"`

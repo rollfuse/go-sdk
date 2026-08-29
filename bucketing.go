@@ -18,8 +18,8 @@ const percentageScale = bucketModulus / 100
 // use Go's hash/fnv standard library package, so there is no
 // cross-implementation reimplementation risk here the way there was for
 // packages/sdk-js's JavaScript port. Verified against the same shared
-// golden-vector fixture as sdk-js
-// (packages/sdk-js/test/fixtures/bucketing-vectors.json) in
+// golden-vector fixture as evaluation-core
+// (packages/evaluation-core/test/fixtures/bucketing-vectors.json) in
 // bucketing_test.go, as a regression check.
 //
 // This algorithm is a stable, versioned contract: it MUST NOT change in
