@@ -1,0 +1,72 @@
+schema: spec-driven
+
+# Project context (optional)
+# This is shown to AI when creating artifacts.
+# Add your tech stack, conventions, style guides, domain knowledge, etc.
+# Example:
+#   context: |
+#     Tech stack: TypeScript, React, Node.js
+#     We use conventional commits
+#     Domain: e-commerce platform
+context: |
+  Tech stack: Go, standard library only (no third-party runtime
+  dependencies).
+
+  Domain: server-side Go SDK for the rollfuse feature-flag platform. This
+  repository is a client library, extracted from the rollfuse/rollfuse
+  application monorepo (extract-go-sdk-standalone-repo) — it has no HTTP
+  server, no database, and no multi-tenant request handling of its own. It
+  holds a Service Credential secret on behalf of the integrating backend
+  and calls rollfuse/rollfuse's API (GET /v1/config, POST
+  /v1/exposure-events).
+
+  Cross-repo parity constraint: this SDK's bucketing algorithm MUST match
+  rollfuse/rollfuse's API and its other SDKs (sdk-js, sdk-browser) bit for
+  bit. testdata/bucketing-vectors.json is a checked-in mirror of that
+  monorepo's packages/evaluation-core/test/fixtures/bucketing-vectors.json
+  (the source of truth, generated from apps/api's own Bucket()) — kept
+  from drifting by rollfuse/rollfuse's own CI
+  (scripts/check-bucketing-fixture-drift.sh), which fetches this repo's
+  copy and diffs it. Any change to bucketing.go's output requires
+  coordinating a fixture update on both sides; never edit
+  testdata/bucketing-vectors.json to make a bucketing change pass without
+  first regenerating it from the monorepo's source of truth.
+
+  Every requirement in openspec/specs/sdk-go/spec.md is a portable
+  behavioral contract also expressed as a requirement of
+  rollfuse/rollfuse's platform-conformance-harness (its Go driver
+  exercises this SDK directly, over the network, against a real
+  environment) — a spec change here that changes observable behavior
+  should be cross-checked against that harness's expectations before
+  release.
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always include a "Non-goals" section
+rules:
+  design:
+    - Concurrency-sensitive changes (anything touching the cached
+      Configuration, the exposure queue, or background refresh/flush
+      goroutines) must state how the change was verified under
+      `go test ./... -race`, not just `go test ./...`.
+    - A change to bucketing.go's algorithm or its inputs must state how
+      testdata/bucketing-vectors.json is kept in sync with
+      rollfuse/rollfuse's source-of-truth fixture, since this repo does
+      not generate that fixture itself.
+  tasks:
+    - Every task touching evaluation, caching, the exposure queue, or
+      background goroutines must include a `go test ./... -race`
+      verification step, not only `go build`/`go vet`.
+
+# Per-operation guidance (optional)
+# Add advisory guidance for how apply and archive work should be conducted.
+# This is separate from artifact rules above.
+# Example:
+#   operations:
+#     apply:
+#       guidance:
+#         - Keep test summaries concise

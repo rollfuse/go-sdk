@@ -1,0 +1,19 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      semver-patch-days: 7
+      semver-minor-days: 7
+      semver-major-days: 14
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # Dependabot does not support the `cooldown` key for this ecosystem
+    # ("The property '#/updates/N/cooldown/...' is not supported for the
+    # package ecosystem 'github-actions'"). Actions releases still update
+    # weekly without a cooldown window.

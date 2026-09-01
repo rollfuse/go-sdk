@@ -6,8 +6,8 @@
 // It targets Go server-side backends: it holds a Service Credential
 // secret, so it is not meant for untrusted client environments. See
 // openspec/specs/sdk-go/spec.md for its full behavioral contract, and
-// packages/sdk-js for the equivalent Node.js SDK this package mirrors in
-// idiomatic Go rather than as a direct port.
+// rollfuse/rollfuse's packages/sdk-js for the equivalent Node.js SDK this
+// package mirrors in idiomatic Go rather than as a direct port.
 //
 // # Usage
 //
