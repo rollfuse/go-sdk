@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	rollfuse "github.com/jeanmolossi/rollfuse/packages/sdk-go"
+	rollfuse "github.com/rollfuse/go-sdk"
 )
 
 func testConfigurationServer(t *testing.T, flag rollfuse.FlagConfig, version int64) *httptest.Server {

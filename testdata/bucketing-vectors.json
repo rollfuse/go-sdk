@@ -1,0 +1,357 @@
+[
+  {
+    "flag_key": "checkout-redesign",
+    "subject_key": "user_123",
+    "bucket": 2159
+  },
+  {
+    "flag_key": "checkout-redesign",
+    "subject_key": "user_124",
+    "bucket": 6598
+  },
+  {
+    "flag_key": "banner-copy",
+    "subject_key": "user_1",
+    "bucket": 100
+  },
+  {
+    "flag_key": "banner-copy",
+    "subject_key": "user_2",
+    "bucket": 2957
+  },
+  {
+    "flag_key": "banner-copy",
+    "subject_key": "user_3",
+    "bucket": 5338
+  },
+  {
+    "flag_key": "new-checkout-flow",
+    "subject_key": "anonymous",
+    "bucket": 7500
+  },
+  {
+    "flag_key": "new-checkout-flow",
+    "subject_key": "",
+    "bucket": 619
+  },
+  {
+    "flag_key": "",
+    "subject_key": "user_123",
+    "bucket": 5409
+  },
+  {
+    "flag_key": "",
+    "subject_key": "",
+    "bucket": 8253
+  },
+  {
+    "flag_key": "flag-a",
+    "subject_key": "user_a",
+    "bucket": 4370
+  },
+  {
+    "flag_key": "flag-b",
+    "subject_key": "user_a",
+    "bucket": 1957
+  },
+  {
+    "flag_key": "utf8-flag-éè",
+    "subject_key": "usuário-joão",
+    "bucket": 7493
+  },
+  {
+    "flag_key": "emoji-flag-🚀",
+    "subject_key": "subject-😀",
+    "bucket": 3590
+  },
+  {
+    "flag_key": "long-flag-key-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "subject_key": "subject",
+    "bucket": 575
+  },
+  {
+    "flag_key": "flag",
+    "subject_key": "long-subject-key-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "bucket": 6485
+  },
+  {
+    "flag_key": "flag:with:colons",
+    "subject_key": "subject:with:colons",
+    "bucket": 5277
+  },
+  {
+    "flag_key": "flag",
+    "subject_key": "subject-that-hashes-near-wraparound-boundary-hopefully-000000000000000000",
+    "bucket": 4196
+  },
+  {
+    "flag_key": "a",
+    "subject_key": "b",
+    "bucket": 8144
+  },
+  {
+    "flag_key": "case-Sensitive-Flag",
+    "subject_key": "Case-Sensitive-Subject",
+    "bucket": 4161
+  },
+  {
+    "flag_key": "case-sensitive-flag",
+    "subject_key": "case-sensitive-subject",
+    "bucket": 4033
+  },
+  {
+    "flag_key": "unicode-中文",
+    "subject_key": "主体-日本語",
+    "bucket": 5061
+  },
+  {
+    "flag_key": "sweep-flag-0",
+    "subject_key": "sweep-subject-0",
+    "bucket": 639
+  },
+  {
+    "flag_key": "sweep-flag-1",
+    "subject_key": "sweep-subject-1",
+    "bucket": 6311
+  },
+  {
+    "flag_key": "sweep-flag-2",
+    "subject_key": "sweep-subject-2",
+    "bucket": 9031
+  },
+  {
+    "flag_key": "sweep-flag-3",
+    "subject_key": "sweep-subject-3",
+    "bucket": 8023
+  },
+  {
+    "flag_key": "sweep-flag-4",
+    "subject_key": "sweep-subject-4",
+    "bucket": 3719
+  },
+  {
+    "flag_key": "sweep-flag-0",
+    "subject_key": "sweep-subject-5",
+    "bucket": 2544
+  },
+  {
+    "flag_key": "sweep-flag-1",
+    "subject_key": "sweep-subject-6",
+    "bucket": 3454
+  },
+  {
+    "flag_key": "sweep-flag-2",
+    "subject_key": "sweep-subject-7",
+    "bucket": 936
+  },
+  {
+    "flag_key": "sweep-flag-3",
+    "subject_key": "sweep-subject-8",
+    "bucket": 4690
+  },
+  {
+    "flag_key": "sweep-flag-4",
+    "subject_key": "sweep-subject-9",
+    "bucket": 4672
+  },
+  {
+    "flag_key": "sweep-flag-0",
+    "subject_key": "sweep-subject-10",
+    "bucket": 2500
+  },
+  {
+    "flag_key": "sweep-flag-1",
+    "subject_key": "sweep-subject-11",
+    "bucket": 7090
+  },
+  {
+    "flag_key": "sweep-flag-2",
+    "subject_key": "sweep-subject-12",
+    "bucket": 5672
+  },
+  {
+    "flag_key": "sweep-flag-3",
+    "subject_key": "sweep-subject-13",
+    "bucket": 5946
+  },
+  {
+    "flag_key": "sweep-flag-4",
+    "subject_key": "sweep-subject-14",
+    "bucket": 5156
+  },
+  {
+    "flag_key": "sweep-flag-0",
+    "subject_key": "sweep-subject-15",
+    "bucket": 9643
+  },
+  {
+    "flag_key": "sweep-flag-1",
+    "subject_key": "sweep-subject-16",
+    "bucket": 8995
+  },
+  {
+    "flag_key": "sweep-flag-2",
+    "subject_key": "sweep-subject-17",
+    "bucket": 3767
+  },
+  {
+    "flag_key": "sweep-flag-3",
+    "subject_key": "sweep-subject-18",
+    "bucket": 7375
+  },
+  {
+    "flag_key": "sweep-flag-4",
+    "subject_key": "sweep-subject-19",
+    "bucket": 8643
+  },
+  {
+    "flag_key": "sweep-flag-0",
+    "subject_key": "sweep-subject-20",
+    "bucket": 2351
+  },
+  {
+    "flag_key": "sweep-flag-1",
+    "subject_key": "sweep-subject-21",
+    "bucket": 5137
+  },
+  {
+    "flag_key": "sweep-flag-2",
+    "subject_key": "sweep-subject-22",
+    "bucket": 2863
+  },
+  {
+    "flag_key": "sweep-flag-3",
+    "subject_key": "sweep-subject-23",
+    "bucket": 4821
+  },
+  {
+    "flag_key": "sweep-flag-4",
+    "subject_key": "sweep-subject-24",
+    "bucket": 5007
+  },
+  {
+    "flag_key": "sweep-flag-0",
+    "subject_key": "sweep-subject-25",
+    "bucket": 4256
+  },
+  {
+    "flag_key": "sweep-flag-1",
+    "subject_key": "sweep-subject-26",
+    "bucket": 2756
+  },
+  {
+    "flag_key": "sweep-flag-2",
+    "subject_key": "sweep-subject-27",
+    "bucket": 4768
+  },
+  {
+    "flag_key": "sweep-flag-3",
+    "subject_key": "sweep-subject-28",
+    "bucket": 2916
+  },
+  {
+    "flag_key": "sweep-flag-4",
+    "subject_key": "sweep-subject-29",
+    "bucket": 7864
+  },
+  {
+    "flag_key": "sweep-flag-0",
+    "subject_key": "sweep-subject-30",
+    "bucket": 4310
+  },
+  {
+    "flag_key": "sweep-flag-1",
+    "subject_key": "sweep-subject-31",
+    "bucket": 644
+  },
+  {
+    "flag_key": "sweep-flag-2",
+    "subject_key": "sweep-subject-32",
+    "bucket": 2594
+  },
+  {
+    "flag_key": "sweep-flag-3",
+    "subject_key": "sweep-subject-33",
+    "bucket": 1916
+  },
+  {
+    "flag_key": "sweep-flag-4",
+    "subject_key": "sweep-subject-34",
+    "bucket": 5054
+  },
+  {
+    "flag_key": "sweep-flag-0",
+    "subject_key": "sweep-subject-35",
+    "bucket": 2405
+  },
+  {
+    "flag_key": "sweep-flag-1",
+    "subject_key": "sweep-subject-36",
+    "bucket": 3025
+  },
+  {
+    "flag_key": "sweep-flag-2",
+    "subject_key": "sweep-subject-37",
+    "bucket": 9737
+  },
+  {
+    "flag_key": "sweep-flag-3",
+    "subject_key": "sweep-subject-38",
+    "bucket": 5725
+  },
+  {
+    "flag_key": "sweep-flag-4",
+    "subject_key": "sweep-subject-39",
+    "bucket": 2197
+  },
+  {
+    "flag_key": "sweep-flag-0",
+    "subject_key": "sweep-subject-40",
+    "bucket": 6137
+  },
+  {
+    "flag_key": "sweep-flag-1",
+    "subject_key": "sweep-subject-41",
+    "bucket": 6859
+  },
+  {
+    "flag_key": "sweep-flag-2",
+    "subject_key": "sweep-subject-42",
+    "bucket": 9785
+  },
+  {
+    "flag_key": "sweep-flag-3",
+    "subject_key": "sweep-subject-43",
+    "bucket": 7303
+  },
+  {
+    "flag_key": "sweep-flag-4",
+    "subject_key": "sweep-subject-44",
+    "bucket": 4905
+  },
+  {
+    "flag_key": "sweep-flag-0",
+    "subject_key": "sweep-subject-45",
+    "bucket": 8994
+  },
+  {
+    "flag_key": "sweep-flag-1",
+    "subject_key": "sweep-subject-46",
+    "bucket": 4954
+  },
+  {
+    "flag_key": "sweep-flag-2",
+    "subject_key": "sweep-subject-47",
+    "bucket": 2642
+  },
+  {
+    "flag_key": "sweep-flag-3",
+    "subject_key": "sweep-subject-48",
+    "bucket": 3970
+  },
+  {
+    "flag_key": "sweep-flag-4",
+    "subject_key": "sweep-subject-49",
+    "bucket": 1418
+  }
+]

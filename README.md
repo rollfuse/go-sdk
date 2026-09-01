@@ -1,9 +1,11 @@
-# github.com/jeanmolossi/rollfuse/packages/sdk-go
+# github.com/rollfuse/go-sdk
 
-> **Renamed from `github.com/jeanmolossi/growth-ops/packages/sdk-go`.** The
-> module path and package identifier changed from `growthops` to
-> `rollfuse` — update your import path and, if you aliased the import,
-> the identifier you call it by. The client's behavior did not change.
+> **Moved from `github.com/jeanmolossi/rollfuse/packages/sdk-go`**, a
+> subdirectory of the `rollfuse` application monorepo, to this standalone
+> repository. Only the import path changes — update it to
+> `github.com/rollfuse/go-sdk`. The package identifier stays `rollfuse`
+> (`rollfuse.NewClient(...)` etc.) and the client's behavior did not
+> change. History prior to the move is preserved (see `git log`).
 
 The Go SDK for rollfuse: evaluates feature flags
 locally against cached, versioned configuration (ADR 0004: Evaluate Flags
@@ -11,21 +13,20 @@ Locally in SDKs), instead of calling the API synchronously on every
 evaluation.
 
 Server-side only — it holds a Service Credential secret, so it targets Go
-backends, not untrusted client environments. See
-`openspec/specs/sdk-go/spec.md` for its full behavioral contract, and
-`packages/sdk-js` for the equivalent Node.js SDK this package mirrors in
-idiomatic Go rather than as a direct port.
+backends, not untrusted client environments. See the `rollfuse/rollfuse`
+monorepo's `packages/sdk-js` for the equivalent Node.js SDK this package
+mirrors in idiomatic Go rather than as a direct port.
 
 ## Install
 
 ```bash
-go get github.com/jeanmolossi/rollfuse/packages/sdk-go
+go get github.com/rollfuse/go-sdk
 ```
 
 ## Usage
 
 ```go
-import rollfuse "github.com/jeanmolossi/rollfuse/packages/sdk-go"
+import rollfuse "github.com/rollfuse/go-sdk"
 
 client, err := rollfuse.NewClient(
     "https://api.rollfuse.com",
@@ -89,6 +90,11 @@ golangci-lint run ./...
 go test ./... -race
 ```
 
-A separate Go module from `apps/api` (its own `go.mod`), so importing it
-never pulls in the API's own dependency tree. No dependency beyond the Go
+A standalone repository and Go module, so importing it never pulls in the
+`rollfuse/rollfuse` API's own dependency tree. No dependency beyond the Go
 standard library.
+
+`testdata/bucketing-vectors.json` is a checked-in mirror of the
+cross-implementation golden-vector fixture whose source of truth is
+`rollfuse/rollfuse`'s `packages/evaluation-core/test/fixtures/bucketing-vectors.json`;
+see `bucketing_test.go` for how the two are kept from silently drifting.

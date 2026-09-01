@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	rollfuse "github.com/jeanmolossi/rollfuse/packages/sdk-go"
+	rollfuse "github.com/rollfuse/go-sdk"
 )
 
 func testFlag(overrides func(*rollfuse.FlagConfig)) rollfuse.FlagConfig {

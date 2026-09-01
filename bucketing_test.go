@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	rollfuse "github.com/jeanmolossi/rollfuse/packages/sdk-go"
+	rollfuse "github.com/rollfuse/go-sdk"
 )
 
 // TestBucket_Deterministic exercises tasks.md 2.2's stability half: the
@@ -57,18 +57,19 @@ func TestBucket_WithinRange(t *testing.T) {
 	}
 }
 
-// bucketingGoldenVectorsPath points at the fixture add-sdk-js's tasks.md
-// 1.1 generated once from apps/api's own Bucket() and checked in for
-// every SDK to reproduce bit-for-bit — packages/evaluation-core
-// (extracted from packages/sdk-js by add-public-client-credential; both
-// packages/sdk-js and packages/sdk-browser depend on it) consumes the
-// same file. This is the cross-implementation parity contract described
-// in design.md: if a future edit to any of the implementations (API,
-// evaluation-core, sdk-go) ever changes its output for any of these
-// vectors, this test fails here, and the equivalent tests fail
-// identically in the others, so no implementation can silently drift
-// from the others.
-const bucketingGoldenVectorsPath = "../evaluation-core/test/fixtures/bucketing-vectors.json"
+// bucketingGoldenVectorsPath points at testdata/bucketing-vectors.json, a
+// checked-in mirror of the fixture generated once from
+// growth-ops/apps/api's own Bucket() (see that repo's
+// packages/evaluation-core/test/fixtures/bucketing-vectors.json, its
+// source of truth). It is kept in sync by growth-ops's
+// scripts/check-bucketing-fixture-drift.sh, which runs in that repo's CI
+// and fails the build if this file and the monorepo's copy ever diverge.
+// This is the cross-implementation parity contract: if a future edit to
+// any implementation (API, evaluation-core, sdk-go, sdk-js, sdk-browser)
+// ever changes its output for any of these vectors, this test fails here,
+// and the equivalent tests fail identically in the others, so no
+// implementation can silently drift from the others.
+const bucketingGoldenVectorsPath = "testdata/bucketing-vectors.json"
 
 type bucketingGoldenVector struct {
 	FlagKey    string `json:"flag_key"`
