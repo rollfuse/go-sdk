@@ -1,11 +1,9 @@
 # github.com/rollfuse/go-sdk
 
-> **Moved from `github.com/jeanmolossi/rollfuse/packages/sdk-go`**, a
-> subdirectory of the `rollfuse` application monorepo, to this standalone
-> repository. Only the import path changes — update it to
-> `github.com/rollfuse/go-sdk`. The package identifier stays `rollfuse`
-> (`rollfuse.NewClient(...)` etc.) and the client's behavior did not
-> change. History prior to the move is preserved (see `git log`).
+> **Extracted from `rollfuse/rollfuse`** (the private platform monorepo) to
+> this standalone, public repository. The package identifier stays
+> `rollfuse` (`rollfuse.NewClient(...)` etc.) and the client's behavior did
+> not change. History prior to the move is preserved (see `git log`).
 
 The Go SDK for rollfuse: evaluates feature flags
 locally against cached, versioned configuration (ADR 0004: Evaluate Flags
@@ -13,9 +11,10 @@ Locally in SDKs), instead of calling the API synchronously on every
 evaluation.
 
 Server-side only — it holds a Service Credential secret, so it targets Go
-backends, not untrusted client environments. See the `rollfuse/rollfuse`
-monorepo's `packages/sdk-js` for the equivalent Node.js SDK this package
-mirrors in idiomatic Go rather than as a direct port.
+backends, not untrusted client environments. See
+[`rollfuse/js-sdk`](https://github.com/rollfuse/js-sdk)'s `packages/sdk`
+for the equivalent Node.js SDK this package mirrors in idiomatic Go rather
+than as a direct port.
 
 ## Install
 
@@ -30,7 +29,7 @@ import rollfuse "github.com/rollfuse/go-sdk"
 
 client, err := rollfuse.NewClient(
     "https://api.rollfuse.com",
-    os.Getenv("GROWTH_OPS_CREDENTIAL"), // read wherever you keep secrets; the SDK never reads it itself
+    os.Getenv("ROLLFUSE_CREDENTIAL"), // read wherever you keep secrets; the SDK never reads it itself
 )
 if err != nil {
     // handle error
@@ -95,6 +94,9 @@ A standalone repository and Go module, so importing it never pulls in the
 standard library.
 
 `testdata/bucketing-vectors.json` is a checked-in mirror of the
-cross-implementation golden-vector fixture whose source of truth is
-`rollfuse/rollfuse`'s `packages/evaluation-core/test/fixtures/bucketing-vectors.json`;
-see `bucketing_test.go` for how the two are kept from silently drifting.
+cross-implementation golden-vector fixture whose source of truth is the
+private `rollfuse/rollfuse` platform monorepo's
+`apps/api/internal/evaluation/domain/testdata/bucketing-vectors.json`
+(also mirrored into `rollfuse/js-sdk`'s
+`packages/evaluation-core/test/fixtures/bucketing-vectors.json`); see
+`bucketing_test.go` for how this copy is kept from silently drifting.
