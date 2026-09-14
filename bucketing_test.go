@@ -62,7 +62,7 @@ func TestBucket_WithinRange(t *testing.T) {
 // growth-ops/apps/api's own Bucket() (see that repo's
 // packages/evaluation-core/test/fixtures/bucketing-vectors.json, its
 // source of truth). It is kept in sync by growth-ops's
-// scripts/check-bucketing-fixture-drift.sh, which runs in that repo's CI
+// scripts/check-conformance-fixture-drift.sh, which runs in that repo's CI
 // and fails the build if this file and the monorepo's copy ever diverge.
 // This is the cross-implementation parity contract: if a future edit to
 // any implementation (API, evaluation-core, sdk-go, sdk-js, sdk-browser)

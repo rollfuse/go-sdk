@@ -1,0 +1,177 @@
+[
+  {
+    "description": "two-way 50/50 split: subject bucket 0 (start of space) resolves to the first split",
+    "flag_key": "rollout-boundary-flag",
+    "subject_key": "subject-28069",
+    "rollout": [
+      { "variation_key": "a", "percentage": 50 },
+      { "variation_key": "b", "percentage": 50 }
+    ],
+    "default_variation_key": "off",
+    "expected_variation_key": "a"
+  },
+  {
+    "description": "two-way 50/50 split: subject bucket 4999, the last bucket still owned by the first split",
+    "flag_key": "rollout-boundary-flag",
+    "subject_key": "subject-10838",
+    "rollout": [
+      { "variation_key": "a", "percentage": 50 },
+      { "variation_key": "b", "percentage": 50 }
+    ],
+    "default_variation_key": "off",
+    "expected_variation_key": "a"
+  },
+  {
+    "description": "two-way 50/50 split: subject bucket exactly 5000, the boundary itself, MUST resolve to the second split (cumulative comparison is strict-less-than, not less-than-or-equal)",
+    "flag_key": "rollout-boundary-flag",
+    "subject_key": "subject-3873",
+    "rollout": [
+      { "variation_key": "a", "percentage": 50 },
+      { "variation_key": "b", "percentage": 50 }
+    ],
+    "default_variation_key": "off",
+    "expected_variation_key": "b"
+  },
+  {
+    "description": "two-way 50/50 split: subject bucket 5001, just past the boundary",
+    "flag_key": "rollout-boundary-flag",
+    "subject_key": "subject-58487",
+    "rollout": [
+      { "variation_key": "a", "percentage": 50 },
+      { "variation_key": "b", "percentage": 50 }
+    ],
+    "default_variation_key": "off",
+    "expected_variation_key": "b"
+  },
+  {
+    "description": "two-way 50/50 split: subject bucket 9999 (end of space) resolves to the last split",
+    "flag_key": "rollout-boundary-flag",
+    "subject_key": "subject-8507",
+    "rollout": [
+      { "variation_key": "a", "percentage": 50 },
+      { "variation_key": "b", "percentage": 50 }
+    ],
+    "default_variation_key": "off",
+    "expected_variation_key": "b"
+  },
+  {
+    "description": "three-way 33/33/34 split: subject bucket 3299, the last bucket owned by the first split",
+    "flag_key": "rollout-boundary-flag",
+    "subject_key": "subject-5027",
+    "rollout": [
+      { "variation_key": "a", "percentage": 33 },
+      { "variation_key": "b", "percentage": 33 },
+      { "variation_key": "c", "percentage": 34 }
+    ],
+    "default_variation_key": "off",
+    "expected_variation_key": "a"
+  },
+  {
+    "description": "three-way 33/33/34 split: subject bucket exactly 3300, the first boundary, MUST resolve to the second split",
+    "flag_key": "rollout-boundary-flag",
+    "subject_key": "subject-13100",
+    "rollout": [
+      { "variation_key": "a", "percentage": 33 },
+      { "variation_key": "b", "percentage": 33 },
+      { "variation_key": "c", "percentage": 34 }
+    ],
+    "default_variation_key": "off",
+    "expected_variation_key": "b"
+  },
+  {
+    "description": "three-way 33/33/34 split: subject bucket 3301, just past the first boundary",
+    "flag_key": "rollout-boundary-flag",
+    "subject_key": "subject-4501",
+    "rollout": [
+      { "variation_key": "a", "percentage": 33 },
+      { "variation_key": "b", "percentage": 33 },
+      { "variation_key": "c", "percentage": 34 }
+    ],
+    "default_variation_key": "off",
+    "expected_variation_key": "b"
+  },
+  {
+    "description": "three-way 33/33/34 split: subject bucket 6599, the last bucket owned by the second split",
+    "flag_key": "rollout-boundary-flag",
+    "subject_key": "subject-42910",
+    "rollout": [
+      { "variation_key": "a", "percentage": 33 },
+      { "variation_key": "b", "percentage": 33 },
+      { "variation_key": "c", "percentage": 34 }
+    ],
+    "default_variation_key": "off",
+    "expected_variation_key": "b"
+  },
+  {
+    "description": "three-way 33/33/34 split: subject bucket exactly 6600, the second boundary, MUST resolve to the third split",
+    "flag_key": "rollout-boundary-flag",
+    "subject_key": "subject-1134",
+    "rollout": [
+      { "variation_key": "a", "percentage": 33 },
+      { "variation_key": "b", "percentage": 33 },
+      { "variation_key": "c", "percentage": 34 }
+    ],
+    "default_variation_key": "off",
+    "expected_variation_key": "c"
+  },
+  {
+    "description": "three-way 33/33/34 split: subject bucket 6601, just past the second boundary",
+    "flag_key": "rollout-boundary-flag",
+    "subject_key": "subject-17161",
+    "rollout": [
+      { "variation_key": "a", "percentage": 33 },
+      { "variation_key": "b", "percentage": 33 },
+      { "variation_key": "c", "percentage": 34 }
+    ],
+    "default_variation_key": "off",
+    "expected_variation_key": "c"
+  },
+  {
+    "description": "three-way 33/33/34 split: subject bucket 9998, near the end of the space",
+    "flag_key": "rollout-boundary-flag",
+    "subject_key": "subject-4416",
+    "rollout": [
+      { "variation_key": "a", "percentage": 33 },
+      { "variation_key": "b", "percentage": 33 },
+      { "variation_key": "c", "percentage": 34 }
+    ],
+    "default_variation_key": "off",
+    "expected_variation_key": "c"
+  },
+  {
+    "description": "three-way 33/33/34 split: subject bucket 9999, the end of the space, resolves to the last split",
+    "flag_key": "rollout-boundary-flag",
+    "subject_key": "subject-8507",
+    "rollout": [
+      { "variation_key": "a", "percentage": 33 },
+      { "variation_key": "b", "percentage": 33 },
+      { "variation_key": "c", "percentage": 34 }
+    ],
+    "default_variation_key": "off",
+    "expected_variation_key": "c"
+  },
+  {
+    "description": "single 100% split: every subject resolves to the only variation, including at both ends of the bucket space",
+    "flag_key": "rollout-boundary-flag",
+    "subject_key": "subject-28069",
+    "rollout": [{ "variation_key": "only", "percentage": 100 }],
+    "default_variation_key": "off",
+    "expected_variation_key": "only"
+  },
+  {
+    "description": "single 100% split: end-of-space subject also resolves to the only variation",
+    "flag_key": "rollout-boundary-flag",
+    "subject_key": "subject-8507",
+    "rollout": [{ "variation_key": "only", "percentage": 100 }],
+    "default_variation_key": "off",
+    "expected_variation_key": "only"
+  },
+  {
+    "description": "a rollout whose splits do not cover the full bucket space (an invalid, defensively-handled configuration) MUST fall back to the flag's default variation rather than resolving to no variation at all, for a subject whose bucket falls in the uncovered remainder",
+    "flag_key": "rollout-boundary-flag",
+    "subject_key": "subject-3873",
+    "rollout": [{ "variation_key": "a", "percentage": 50 }],
+    "default_variation_key": "off",
+    "expected_variation_key": null
+  }
+]

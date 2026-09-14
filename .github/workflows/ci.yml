@@ -38,6 +38,9 @@ jobs:
       - name: go test -race
         run: go test ./... -race -p 1
 
+      - name: check conformance fixtures against rollfuse/sdk-conformance-fixtures
+        run: ./scripts/check-conformance-fixture-drift.sh
+
   dependency-scan:
     name: Dependency vulnerability scan
     runs-on: ubuntu-latest
