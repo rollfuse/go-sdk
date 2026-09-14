@@ -169,6 +169,84 @@ func TestConfigurationClient_RepeatedFailuresKeepLastKnownGood(t *testing.T) {
 	}
 }
 
+// TestConfigurationClient_HungConnectionIsAbandoned exercises
+// harden-sdk-runtime task 4.1: a connection that hangs (the server
+// accepts it but never responds — distinct from connection-refused, which
+// already fails fast on its own) must be abandoned once requestTimeout
+// elapses, and the poll loop must continue on its normal schedule rather
+// than stalling on it indefinitely. Before this fix, this client fell
+// back to http.DefaultClient (Timeout == 0, no deadline at all) with no
+// per-request context deadline either, so attemptFetch — and with it, the
+// whole poll loop, since pollLoop only schedules its next attempt after
+// the current one returns — would have blocked for as long as the
+// connection stayed open. Manually verified: reverting the per-request
+// context.WithTimeout made this test itself time out at 2s waiting for
+// the first error; reverted back before committing.
+func TestConfigurationClient_HungConnectionIsAbandoned(t *testing.T) {
+	unblock := make(chan struct{})
+	defer close(unblock)
+
+	var requestCount atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount.Add(1)
+		// Accepts the connection but never writes a response until the
+		// test itself is done — the genuine hang this test targets.
+		select {
+		case <-unblock:
+		case <-r.Context().Done():
+		}
+	}))
+	defer server.Close()
+
+	errCh := make(chan error, 10)
+	startedAt := time.Now()
+
+	c := newConfigurationClient(server.URL, "cred", configurationClientOptions{
+		requestTimeout:       50 * time.Millisecond,
+		onConfigRefreshError: func(err error) { errCh <- err },
+	})
+	defer c.close()
+
+	// Long enough that this ctx's own deadline is never what start()
+	// actually returns on — the point is to observe the first request's
+	// own completion time, not race it against a second timeout.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	go func() { _ = c.start(ctx) }()
+
+	select {
+	case <-errCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected the first abandoned request to report an error well before 2s")
+	}
+
+	elapsed := time.Since(startedAt)
+
+	// Generous upper bound for CI scheduling jitter; still an order of
+	// magnitude below what blocking on the hung connection until this
+	// test's own 3s ctx (let alone indefinitely) would take.
+	if elapsed > 500*time.Millisecond {
+		t.Fatalf("expected the abandoned request to be reported well under 500ms (requestTimeout=50ms), took %v", elapsed)
+	}
+
+	if got := requestCount.Load(); got < 1 {
+		t.Fatalf("expected at least one request attempt to have reached the server, got %d", got)
+	}
+
+	// The poll loop's own retry backoff (baseBackoff, 1s, unexported and
+	// not configurable via options) schedules the next attempt after the
+	// first failure — waiting for a second reported error proves the
+	// abandoned connection did not stall the loop, not only that the
+	// first request was itself abandoned correctly.
+	select {
+	case <-errCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected the poll loop to continue and report a second error within 2s")
+	}
+}
+
 func TestConfigurationClient_StartReturnsCtxErrIfNeverSucceeds(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)

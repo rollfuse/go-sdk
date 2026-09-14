@@ -13,6 +13,7 @@ type clientConfig struct {
 	httpClient            *http.Client
 	refreshInterval       time.Duration
 	maxConfigAge          time.Duration
+	requestTimeout        time.Duration
 	exposureQueueCapacity int
 	exposureBatchSize     int
 	exposureFlushInterval time.Duration
@@ -35,6 +36,15 @@ func WithHTTPClient(c *http.Client) Option {
 // refreshes (default 30s).
 func WithRefreshInterval(d time.Duration) Option {
 	return func(cfg *clientConfig) { cfg.refreshInterval = d }
+}
+
+// WithRequestTimeout bounds a single GET /v1/config request (default
+// 10s). A hung connection is abandoned once it elapses, and the poll loop
+// continues on its normal schedule rather than stalling on it
+// indefinitely — see configurationClient's own requestTimeout doc
+// comment.
+func WithRequestTimeout(d time.Duration) Option {
+	return func(cfg *clientConfig) { cfg.requestTimeout = d }
 }
 
 // WithMaxConfigAge makes Evaluate/EvaluateAll treat the cached
@@ -143,6 +153,7 @@ func NewClient(baseURL, credential string, opts ...Option) (*Client, error) {
 	configClient := newConfigurationClient(baseURL, credential, configurationClientOptions{
 		refreshInterval:      cfg.refreshInterval,
 		maxConfigAge:         cfg.maxConfigAge,
+		requestTimeout:       cfg.requestTimeout,
 		httpClient:           cfg.httpClient,
 		onConfigRefreshed:    cfg.onConfigRefreshed,
 		onConfigRefreshError: cfg.onConfigRefreshError,
