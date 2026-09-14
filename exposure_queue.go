@@ -21,6 +21,12 @@ const (
 	// version) is reported once within — see exposureQueue.dedupeWindow's
 	// own doc comment.
 	defaultExposureDedupeWindow = 60 * time.Second
+	// platformMaxExposureBatchSize is the platform's declared maximum for
+	// SubmitExposureEventsRequest.events (apps/api/openapi/openapi.yaml's
+	// ExposureEventSubmission maxItems) — see flush()'s own doc comment
+	// for why exceeding it here would be a real failure mode, not just a
+	// style preference.
+	platformMaxExposureBatchSize = 100
 )
 
 // exposureEventSubmission is one entry of the POST /v1/exposure-events
@@ -339,7 +345,21 @@ func (q *exposureQueue) flush() {
 		return
 	}
 
-	q.submit(batch)
+	// Chunked to the platform's declared batch limit (task 9.4): capacity
+	// (default 1000) can hold several batches' worth of events, and a
+	// single flush drains the whole buffer at once — POSTing all of it in
+	// one oversized request would be rejected outright (400
+	// exposure_submission_batch_too_large) rather than partially
+	// accepted. Each chunk is submitted independently; one chunk failing
+	// doesn't stop the others.
+	for start := 0; start < len(batch); start += platformMaxExposureBatchSize {
+		end := start + platformMaxExposureBatchSize
+		if end > len(batch) {
+			end = len(batch)
+		}
+
+		q.submit(batch[start:end])
+	}
 }
 
 // pruneDedupeWindowLocked removes dedupe entries whose window has elapsed,
