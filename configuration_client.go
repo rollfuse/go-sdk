@@ -2,9 +2,11 @@ package rollfuse
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -14,6 +16,9 @@ import (
 var errEmptyEnvironmentID = errors.New("environment_id is empty")
 
 const (
+	// defaultRefreshInterval is used only when neither an explicit
+	// WithRefreshInterval nor the platform's advised
+	// Configuration.PollIntervalSeconds is available (task 9.3).
 	defaultRefreshInterval = 30 * time.Second
 	baseBackoff            = 1 * time.Second
 	maxBackoff             = 30 * time.Second
@@ -21,6 +26,13 @@ const (
 	// matching exposure_queue.go's own submitTimeout — see
 	// requestTimeout's own doc comment.
 	defaultRequestTimeout = 10 * time.Second
+	// jitterRatio is the fraction of extra random delay added on top of
+	// every poll/retry delay (task 9.2): spreads out many clients'
+	// schedules that would otherwise synchronize, per sdk-conformance's
+	// "Polling Revalidates And Does Not Synchronize" requirement. Always
+	// adds, never subtracts, so a client never polls less frequently than
+	// its own configured/advised interval.
+	jitterRatio = 0.2
 )
 
 // configurationClientOptions configures a configurationClient. Populated by
@@ -46,10 +58,13 @@ type configurationClientOptions struct {
 // loop; start after stop resumes it (task 8.3) rather than leaving the
 // client permanently inert.
 type configurationClient struct {
-	baseURL         string
-	credential      string
-	refreshInterval time.Duration
-	maxConfigAge    time.Duration
+	baseURL    string
+	credential string
+	// explicitRefreshInterval is zero unless the integrator supplied
+	// WithRefreshInterval — see currentRefreshInterval's own doc comment
+	// for the resolution order (task 9.3).
+	explicitRefreshInterval time.Duration
+	maxConfigAge            time.Duration
 	// requestTimeout bounds a single GET /v1/config request via a
 	// context.WithTimeout derived from the poll loop's current lifecycle
 	// context, per sdk-conformance's "Every Network Operation Carries A
@@ -66,6 +81,13 @@ type configurationClient struct {
 	config        atomic.Pointer[Configuration]
 	lastFetchedAt atomic.Int64 // UnixNano; 0 means never fetched
 	backoff       time.Duration
+	// etag is the last GET /v1/config response's ETag, verbatim (quotes
+	// included) — echoed back via If-None-Match on the next poll (task
+	// 9.1). Only ever touched from within attemptFetch, which pollLoop
+	// only ever runs one at a time, so it needs no synchronization of its
+	// own despite config/lastFetchedAt needing atomics (those are also
+	// read from other goroutines via getConfig/isStale; this isn't).
+	etag string
 
 	// lifecycleMu protects running/lifecycleCtx/lifecycleCancel across
 	// start()/stop() cycles.
@@ -80,11 +102,6 @@ type configurationClient struct {
 }
 
 func newConfigurationClient(baseURL, credential string, opts configurationClientOptions) *configurationClient {
-	refreshInterval := opts.refreshInterval
-	if refreshInterval <= 0 {
-		refreshInterval = defaultRefreshInterval
-	}
-
 	requestTimeout := opts.requestTimeout
 	if requestTimeout <= 0 {
 		requestTimeout = defaultRequestTimeout
@@ -96,17 +113,35 @@ func newConfigurationClient(baseURL, credential string, opts configurationClient
 	}
 
 	return &configurationClient{
-		baseURL:              baseURL,
-		credential:           credential,
-		refreshInterval:      refreshInterval,
-		maxConfigAge:         opts.maxConfigAge,
-		requestTimeout:       requestTimeout,
-		httpClient:           httpClient,
-		onConfigRefreshed:    opts.onConfigRefreshed,
-		onConfigRefreshError: opts.onConfigRefreshError,
-		backoff:              baseBackoff,
-		ready:                make(chan struct{}),
+		baseURL:                 baseURL,
+		credential:              credential,
+		explicitRefreshInterval: opts.refreshInterval,
+		maxConfigAge:            opts.maxConfigAge,
+		requestTimeout:          requestTimeout,
+		httpClient:              httpClient,
+		onConfigRefreshed:       opts.onConfigRefreshed,
+		onConfigRefreshError:    opts.onConfigRefreshError,
+		backoff:                 baseBackoff,
+		ready:                   make(chan struct{}),
 	}
+}
+
+// currentRefreshInterval resolves the delay between successful polls
+// (task 9.3): an explicitly configured WithRefreshInterval always wins;
+// otherwise the platform's advised Configuration.PollIntervalSeconds
+// (from the most recently fetched Configuration, including one only
+// confirmed unchanged via a 304) wins over this package's own hardcoded
+// default.
+func (c *configurationClient) currentRefreshInterval() time.Duration {
+	if c.explicitRefreshInterval > 0 {
+		return c.explicitRefreshInterval
+	}
+
+	if cfg := c.config.Load(); cfg != nil && cfg.PollIntervalSeconds > 0 {
+		return time.Duration(cfg.PollIntervalSeconds) * time.Second
+	}
+
+	return defaultRefreshInterval
 }
 
 // start begins the background poll loop and blocks until the first fetch
@@ -212,14 +247,14 @@ func (c *configurationClient) pollLoop(ctx context.Context) {
 
 		succeeded := c.attemptFetch(ctx)
 
-		delay := c.refreshInterval
+		baseDelay := c.currentRefreshInterval()
 		if !succeeded {
-			delay = c.nextBackoff()
+			baseDelay = c.nextBackoff()
 		} else {
 			c.backoff = baseBackoff
 		}
 
-		timer := time.NewTimer(delay)
+		timer := time.NewTimer(withJitter(baseDelay))
 
 		select {
 		case <-ctx.Done():
@@ -255,6 +290,14 @@ func (c *configurationClient) attemptFetch(parentCtx context.Context) bool {
 
 	req.Header.Set("Authorization", "Bearer "+c.credential)
 
+	// Presents the last-seen validator (task 9.1): the platform
+	// revalidates against it and responds 304 with no body if the
+	// Configuration hasn't changed, instead of re-transferring one that
+	// would just replace an identical cache.
+	if c.etag != "" {
+		req.Header.Set("If-None-Match", c.etag)
+	}
+
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		c.reportError(fmt.Errorf("GET /v1/config: %w", err))
@@ -262,6 +305,17 @@ func (c *configurationClient) attemptFetch(parentCtx context.Context) bool {
 		return false
 	}
 	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusNotModified {
+		// The platform confirmed the cached Configuration is still
+		// current (task 9.1): a successful poll in every sense that
+		// matters for scheduling/staleness, but with nothing to replace
+		// the cache with and nothing to notify onConfigRefreshed about.
+		c.lastFetchedAt.Store(time.Now().UnixNano())
+		c.readyOnce.Do(func() { close(c.ready) })
+
+		return true
+	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		c.reportError(fmt.Errorf("GET /v1/config returned status %d", resp.StatusCode))
@@ -284,6 +338,7 @@ func (c *configurationClient) attemptFetch(parentCtx context.Context) bool {
 
 	c.config.Store(&cfg)
 	c.lastFetchedAt.Store(time.Now().UnixNano())
+	c.etag = resp.Header.Get("ETag")
 	// Readiness (closing c.ready) happens before the integrator's own
 	// callback runs, matching sdk-conformance's "Readiness resolves
 	// before callbacks run" scenario.
@@ -300,4 +355,25 @@ func (c *configurationClient) reportError(err error) {
 	if c.onConfigRefreshError != nil {
 		safeInvoke(func() { c.onConfigRefreshError(err) })
 	}
+}
+
+// withJitter adds up to jitterRatio extra random delay on top of base
+// (task 9.2), so many clients' poll/retry schedules spread out rather
+// than synchronizing. Always >= base: never polls less frequently than
+// the caller's own configured/advised interval intended. Falls back to
+// base itself if the crypto/rand read fails (matches newCorrelationID's
+// own fallback-rather-than-panic precedent) or if the jitter range would
+// be non-positive.
+func withJitter(base time.Duration) time.Duration {
+	maxExtra := int64(float64(base) * jitterRatio)
+	if maxExtra <= 0 {
+		return base
+	}
+
+	extra, err := rand.Int(rand.Reader, big.NewInt(maxExtra))
+	if err != nil {
+		return base
+	}
+
+	return base + time.Duration(extra.Int64())
 }

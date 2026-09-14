@@ -115,6 +115,10 @@ type Configuration struct {
 	EnvironmentID string       `json:"environment_id"`
 	Version       int64        `json:"version"`
 	Flags         []FlagConfig `json:"flags"`
+	// PollIntervalSeconds is the platform's advised interval for a client
+	// polling GET /v1/config, honored in preference to this package's own
+	// default when no explicit WithRefreshInterval was given (task 9.3).
+	PollIntervalSeconds int64 `json:"poll_interval_seconds"`
 }
 
 // EvaluationReason explains why an evaluation returned the Variation it

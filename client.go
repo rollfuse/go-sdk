@@ -39,7 +39,11 @@ func WithHTTPClient(c *http.Client) Option {
 }
 
 // WithRefreshInterval sets the interval between successful Configuration
-// refreshes (default 30s).
+// refreshes. When not set, the platform's advised
+// Configuration.PollIntervalSeconds (from the most recently fetched
+// Configuration) is used in preference to this package's own 30s
+// default, per sdk-conformance's "The platform advises an interval"
+// scenario (task 9.3) — an explicit value here always wins over either.
 func WithRefreshInterval(d time.Duration) Option {
 	return func(cfg *clientConfig) { cfg.refreshInterval = d }
 }

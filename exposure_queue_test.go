@@ -2,6 +2,7 @@ package rollfuse
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -325,5 +326,59 @@ func TestExposureQueue_ConcurrentFlushesAreSerialized(t *testing.T) {
 
 	if got := maxObservedConcurrency.Load(); got > 1 {
 		t.Fatalf("expected at most 1 concurrent submit request, observed %d", got)
+	}
+}
+
+// TestExposureQueue_ChunksOversizedFlushToThePlatformLimit exercises task
+// 9.4: a single flush whose buffer exceeds the platform's declared batch
+// limit (100) is submitted as multiple requests, none oversized. Manually
+// verified: reverting flush()'s chunking loop back to a single
+// q.submit(batch) call made this test's request-size assertion fail
+// (one request carrying all 250 events); restored before committing.
+func TestExposureQueue_ChunksOversizedFlushToThePlatformLimit(t *testing.T) {
+	recorder := &recordingExposureServer{}
+	server := httptest.NewServer(http.HandlerFunc(recorder.handler))
+
+	defer server.Close()
+
+	q := newExposureQueue(server.URL, "cred", exposureQueueOptions{
+		capacity: 1_000,
+		// batchSize deliberately above the platform's 100-item limit and
+		// above the enqueue count, so nothing auto-triggers a flush
+		// mid-loop — flush() is called explicitly, once, with the whole
+		// 250-item buffer already accumulated.
+		batchSize:     1_000,
+		flushInterval: time.Hour,
+		dedupeWindow:  time.Hour,
+	})
+
+	for i := 0; i < 250; i++ {
+		e := sampleQueuedExposure
+		e.SubjectKey = fmt.Sprintf("user_%d", i)
+		q.enqueue(e)
+	}
+
+	q.flush()
+
+	recorder.mu.Lock()
+	batches := recorder.batches
+	recorder.mu.Unlock()
+
+	if len(batches) != 3 { // 100 + 100 + 50
+		t.Fatalf("expected 3 requests, got %d", len(batches))
+	}
+
+	totalEvents := 0
+
+	for _, batch := range batches {
+		if len(batch) > 100 {
+			t.Fatalf("expected no request to carry more than 100 events, got %d", len(batch))
+		}
+
+		totalEvents += len(batch)
+	}
+
+	if totalEvents != 250 {
+		t.Fatalf("expected 250 total events submitted, got %d", totalEvents)
 	}
 }

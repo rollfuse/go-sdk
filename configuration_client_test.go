@@ -544,3 +544,201 @@ func TestConfigurationClient_PanickingOnConfigRefreshErrorDoesNotCrash(t *testin
 		t.Fatalf("expected the panicking error callback to have been invoked more than once, got %d", got)
 	}
 }
+
+// TestConfigurationClient_PresentsETagAndAcceptsNotModified exercises task
+// 9.1: the client presents its last-seen ETag via If-None-Match, and a
+// 304 response is a successful poll (cache retained, not an error, not
+// replaced) rather than falling through to the generic error path.
+// Manually verified: removing the If-None-Match header, and separately
+// removing the 304 special case, each made this test fail for the
+// expected reason; restored before committing.
+func TestConfigurationClient_PresentsETagAndAcceptsNotModified(t *testing.T) {
+	var requestCount atomic.Int32
+
+	var secondRequestIfNoneMatch atomic.Value
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := requestCount.Add(1)
+
+		if n == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("ETag", `"v1"`)
+			_, _ = w.Write(testConfigJSON(1))
+
+			return
+		}
+
+		secondRequestIfNoneMatch.Store(r.Header.Get("If-None-Match"))
+		w.WriteHeader(http.StatusNotModified)
+	}))
+	defer server.Close()
+
+	errCh := make(chan error, 10)
+
+	c := newConfigurationClient(server.URL, "cred", configurationClientOptions{
+		refreshInterval:      10 * time.Millisecond,
+		onConfigRefreshError: func(err error) { errCh <- err },
+	})
+	defer c.close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := c.start(ctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	deadline := time.After(2 * time.Second)
+
+	for requestCount.Load() < 2 {
+		select {
+		case <-deadline:
+			t.Fatal("expected a second request within the deadline")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+
+	// A 304 is a successful poll: no error reported.
+	select {
+	case err := <-errCh:
+		t.Fatalf("expected no refresh error from a 304 response, got %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	if got, _ := secondRequestIfNoneMatch.Load().(string); got != `"v1"` {
+		t.Fatalf(`expected If-None-Match: "v1" on the second request, got %q`, got)
+	}
+
+	if cfg := c.getConfig(); cfg == nil || cfg.Version != 1 {
+		t.Fatalf("expected the cache to remain at version 1, got %+v", cfg)
+	}
+}
+
+// TestWithJitter exercises task 9.2 directly against the pure function,
+// rather than inferring it from wall-clock timing across real goroutines/
+// HTTP servers: OS scheduling noise made an earlier version of this test
+// (comparing retry-arrival spread across several real clients) pass even
+// with jitter disabled, since goroutine/network noise alone already
+// exceeded the threshold that version checked. This version cannot false-
+// positive that way. Manually verified: pinning withJitter to return base
+// unmodified made every one of 200 calls return exactly base, collapsing
+// the distinct-value count to 1 and failing both assertions below;
+// restored before committing.
+func TestWithJitter(t *testing.T) {
+	const base = time.Second
+
+	seen := make(map[time.Duration]bool)
+
+	for i := 0; i < 200; i++ {
+		delay := withJitter(base)
+
+		if delay < base {
+			t.Fatalf("expected withJitter to never return less than base (%v), got %v", base, delay)
+		}
+
+		if delay > base+time.Duration(float64(base)*jitterRatio) {
+			t.Fatalf("expected withJitter to never exceed base + jitterRatio (%v), got %v", base+time.Duration(float64(base)*jitterRatio), delay)
+		}
+
+		seen[delay] = true
+	}
+
+	if len(seen) < 2 {
+		t.Fatalf("expected withJitter(%v) to return varying delays across 200 calls, got only %d distinct value(s)", base, len(seen))
+	}
+}
+
+// TestConfigurationClient_HonorsAdvisedPollInterval exercises task 9.3:
+// the platform's advised PollIntervalSeconds is used in preference to
+// this package's own default when no explicit WithRefreshInterval was
+// given. Manually verified: reverting currentRefreshInterval to ignore
+// the advised value made this test's second request never arrive within
+// its deadline; restored before committing.
+func TestConfigurationClient_HonorsAdvisedPollInterval(t *testing.T) {
+	var requestCount atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount.Add(1)
+
+		cfg := Configuration{
+			EnvironmentID:       "env_1",
+			Version:             1,
+			PollIntervalSeconds: 1, // 1s advised, far below the 30s default
+			Flags:               []FlagConfig{},
+		}
+		body, _ := json.Marshal(cfg)
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	}))
+	defer server.Close()
+
+	c := newConfigurationClient(server.URL, "cred", configurationClientOptions{
+		// No refreshInterval: falls back to the platform's advised 1s,
+		// not this package's own 30s default.
+	})
+	defer c.close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := c.start(ctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	deadline := time.After(2 * time.Second)
+
+	for requestCount.Load() < 2 {
+		select {
+		case <-deadline:
+			t.Fatal("expected a second poll within ~1s (the advised interval, plus jitter), not the 30s default")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+// TestConfigurationClient_ExplicitRefreshIntervalWinsOverAdvised is the
+// control for task 9.3: an explicitly configured refreshInterval still
+// wins over the platform's advised interval.
+func TestConfigurationClient_ExplicitRefreshIntervalWinsOverAdvised(t *testing.T) {
+	var requestCount atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount.Add(1)
+
+		cfg := Configuration{EnvironmentID: "env_1", Version: 1, PollIntervalSeconds: 1, Flags: []FlagConfig{}}
+		body, _ := json.Marshal(cfg)
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	}))
+	defer server.Close()
+
+	c := newConfigurationClient(server.URL, "cred", configurationClientOptions{
+		refreshInterval: 500 * time.Millisecond, // explicit — wins over the advised 1s
+	})
+	defer c.close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := c.start(ctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	time.Sleep(200 * time.Millisecond)
+
+	if got := requestCount.Load(); got != 1 {
+		t.Fatalf("expected still only 1 request 200ms in (below the explicit 500ms interval), got %d", got)
+	}
+
+	deadline := time.After(2 * time.Second)
+
+	for requestCount.Load() < 2 {
+		select {
+		case <-deadline:
+			t.Fatal("expected a second poll within the explicit ~500ms interval")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
