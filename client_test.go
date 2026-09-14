@@ -692,3 +692,78 @@ func TestClient_Close_BoundedByCloseTimeout(t *testing.T) {
 		t.Fatalf("expected Close() to be bounded by closeTimeout, took %v", elapsed)
 	}
 }
+
+// TestClient_Subscribe_NotifiesOnConfigChange exercises harden-sdk-runtime
+// task 10.1's underlying primitive: Subscribe lets a caller that didn't
+// construct the Client (an OpenFeature provider wrapping an
+// already-built one, per proposal.md's "the Go OpenFeature provider")
+// observe Configuration refreshes without needing its own
+// WithOnConfigRefreshed at construction time. Also verifies the
+// integrator's own WithOnConfigRefreshed (if any) still fires alongside
+// subscribers, and that Unsubscribe stops further notifications.
+func TestClient_Subscribe_NotifiesOnConfigChange(t *testing.T) {
+	var requestCount atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/config" {
+			w.WriteHeader(http.StatusNotFound)
+
+			return
+		}
+
+		n := requestCount.Add(1)
+		cfg := rollfuse.Configuration{EnvironmentID: "env_1", Version: int64(n), Flags: []rollfuse.FlagConfig{matchedFlag()}}
+		body, _ := json.Marshal(cfg)
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	}))
+	defer server.Close()
+
+	var ownCallbackCount atomic.Int32
+
+	client, err := rollfuse.NewClient(
+		server.URL, "cred",
+		rollfuse.WithRefreshInterval(20*time.Millisecond),
+		rollfuse.WithOnConfigRefreshed(func(int64) { ownCallbackCount.Add(1) }),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer func() { _ = client.Close() }()
+
+	var subscriberCount atomic.Int32
+
+	unsubscribe := client.Subscribe(func() { subscriberCount.Add(1) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := client.Start(ctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	deadline := time.After(2 * time.Second)
+
+	for subscriberCount.Load() < 3 {
+		select {
+		case <-deadline:
+			t.Fatalf("expected at least 3 subscriber notifications, got %d", subscriberCount.Load())
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+
+	if got := ownCallbackCount.Load(); got == 0 {
+		t.Fatal("expected the integrator's own WithOnConfigRefreshed to still fire alongside subscribers")
+	}
+
+	unsubscribe()
+
+	countAtUnsubscribe := subscriberCount.Load()
+
+	time.Sleep(100 * time.Millisecond)
+
+	if got := subscriberCount.Load(); got != countAtUnsubscribe {
+		t.Fatalf("expected no further notifications after unsubscribe, went from %d to %d", countAtUnsubscribe, got)
+	}
+}
