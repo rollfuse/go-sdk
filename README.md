@@ -93,10 +93,13 @@ A standalone repository and Go module, so importing it never pulls in the
 `rollfuse/rollfuse` API's own dependency tree. No dependency beyond the Go
 standard library.
 
-`testdata/bucketing-vectors.json` is a checked-in mirror of the
-cross-implementation golden-vector fixture whose source of truth is the
-private `rollfuse/rollfuse` platform monorepo's
-`apps/api/internal/evaluation/domain/testdata/bucketing-vectors.json`
-(also mirrored into `rollfuse/js-sdk`'s
-`packages/evaluation-core/test/fixtures/bucketing-vectors.json`); see
-`bucketing_test.go` for how this copy is kept from silently drifting.
+`testdata/bucketing-vectors.json` and `testdata/rollout-outcome-vectors.json`
+are checked-in mirrors of the cross-implementation conformance fixture
+published at [`rollfuse/sdk-conformance-fixtures`](https://github.com/rollfuse/sdk-conformance-fixtures),
+whose own source of truth is the private `rollfuse/rollfuse` platform
+monorepo's `apps/api/internal/evaluation/domain/testdata/` (also mirrored
+into `rollfuse/js-sdk`'s `packages/evaluation-core/test/fixtures/`); see
+`bucketing_test.go`/`rollout_outcome_test.go` for how these copies are
+checked against this module's own `Bucket()`/`EvaluateFlag()`, and
+`scripts/check-conformance-fixture-drift.sh` (run in CI) for how they are
+checked against the published copy.
