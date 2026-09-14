@@ -16,6 +16,11 @@ const (
 	defaultExposureBatchSize     = 100
 	defaultExposureFlushInterval = 5 * time.Second
 	submitTimeout                = 10 * time.Second
+	// defaultExposureDedupeWindow is the default width of the window an
+	// observation identity (flag, subject, served variation, configuration
+	// version) is reported once within — see exposureQueue.dedupeWindow's
+	// own doc comment.
+	defaultExposureDedupeWindow = 60 * time.Second
 )
 
 // exposureEventSubmission is one entry of the POST /v1/exposure-events
@@ -41,10 +46,22 @@ type queuedExposure struct {
 	ConfigVersion int64
 }
 
+// exposureIdentity is an observation's dedupe key: flag, subject, served
+// variation and configuration version, per design.md's "Deduplication is
+// by observation identity" decision. A comparable struct, usable directly
+// as a map key.
+type exposureIdentity struct {
+	FlagKey       string
+	SubjectKey    string
+	VariationKey  string
+	ConfigVersion int64
+}
+
 type exposureQueueOptions struct {
 	capacity              int
 	batchSize             int
 	flushInterval         time.Duration
+	dedupeWindow          time.Duration
 	httpClient            *http.Client
 	onExposureDropped     func(count int)
 	onExposureSubmitError func(err error)
@@ -62,17 +79,39 @@ type exposureQueueOptions struct {
 // enqueue never blocks the caller: it never performs I/O and holds the
 // lock only for a slice append.
 type exposureQueue struct {
-	baseURL               string
-	credential            string
-	capacity              int
-	batchSize             int
-	flushInterval         time.Duration
+	baseURL       string
+	credential    string
+	capacity      int
+	batchSize     int
+	flushInterval time.Duration
+	// dedupeWindow is the width of the window an observation identity is
+	// reported once within (task 7.4, mirroring the Node/browser clients'
+	// identical dedupeWindowMs): a repeated evaluation with the same
+	// identity inside the window is not re-enqueued; once the window
+	// elapses since the identity was last reported, the next matching
+	// evaluation is treated as a new observation. A changed variation or
+	// configuration version is always a different identity, regardless of
+	// timing. This is also the fix for Client enqueuing on every
+	// evaluation against a capacity-1000 queue that saturates in
+	// milliseconds under real traffic, per proposal.md.
+	dedupeWindow          time.Duration
 	httpClient            *http.Client
 	onExposureDropped     func(count int)
 	onExposureSubmitError func(err error)
 
 	mu     sync.Mutex
 	buffer []exposureEventSubmission
+	// lastReportedAt is when each observation identity was last actually
+	// enqueued. Swept on every flush cycle so an identity that stops
+	// recurring doesn't pin memory forever — see pruneDedupeWindow.
+	lastReportedAt map[exposureIdentity]time.Time
+	// droppedSinceLastReport accumulates capacity drops between flush
+	// cycles, reported as one aggregated onExposureDropped(count) call per
+	// cycle rather than once per dropped event: calling an integrator
+	// callback once per event under a sustained drop storm is itself a
+	// destabilization risk, the same concern safeInvoke guards against,
+	// just at the call-frequency level instead of per-call safety.
+	droppedSinceLastReport int
 
 	flushSignal chan struct{}
 
@@ -100,6 +139,11 @@ func newExposureQueue(baseURL, credential string, opts exposureQueueOptions) *ex
 		flushInterval = defaultExposureFlushInterval
 	}
 
+	dedupeWindow := opts.dedupeWindow
+	if dedupeWindow <= 0 {
+		dedupeWindow = defaultExposureDedupeWindow
+	}
+
 	httpClient := opts.httpClient
 	if httpClient == nil {
 		httpClient = http.DefaultClient
@@ -111,9 +155,11 @@ func newExposureQueue(baseURL, credential string, opts exposureQueueOptions) *ex
 		capacity:              capacity,
 		batchSize:             batchSize,
 		flushInterval:         flushInterval,
+		dedupeWindow:          dedupeWindow,
 		httpClient:            httpClient,
 		onExposureDropped:     opts.onExposureDropped,
 		onExposureSubmitError: opts.onExposureSubmitError,
+		lastReportedAt:        make(map[exposureIdentity]time.Time),
 		flushSignal:           make(chan struct{}, 1),
 		lifecycleCtx:          lifecycleCtx,
 		lifecycleCancel:       cancel,
@@ -137,10 +183,27 @@ func (q *exposureQueue) close() {
 	q.wg.Wait()
 }
 
-// enqueue never blocks and never performs I/O: a full queue drops the
-// event and reports it via onExposureDropped rather than growing unbounded
-// or blocking the caller.
+// enqueue never blocks and never performs I/O.
+//
+// Deduplicated by observation identity (flag, subject, served variation,
+// configuration version) within dedupeWindow (task 7.4): a repeat within
+// the window is silently skipped rather than enqueued again, matching
+// sdk-conformance's "The same evaluation repeats" scenario. A changed
+// variation or configuration version is always a different identity, so
+// it is never skipped regardless of timing.
+//
+// A full queue drops the new event; drops are accumulated and reported in
+// aggregate via onExposureDropped on the next flush cycle (task 7.5)
+// rather than growing the queue unbounded or blocking the caller.
 func (q *exposureQueue) enqueue(e queuedExposure) {
+	identity := exposureIdentity{
+		FlagKey:       e.FlagKey,
+		SubjectKey:    e.SubjectKey,
+		VariationKey:  e.VariationKey,
+		ConfigVersion: e.ConfigVersion,
+	}
+	now := time.Now()
+
 	event := exposureEventSubmission{
 		FlagKey:       e.FlagKey,
 		SubjectKey:    e.SubjectKey,
@@ -148,21 +211,26 @@ func (q *exposureQueue) enqueue(e queuedExposure) {
 		Reason:        e.Reason,
 		ConfigVersion: e.ConfigVersion,
 		CorrelationID: newCorrelationID(),
-		OccurredAt:    time.Now().UTC().Format(time.RFC3339),
+		OccurredAt:    now.UTC().Format(time.RFC3339),
 	}
 
 	q.mu.Lock()
 
-	if len(q.buffer) >= q.capacity {
+	if lastReportedAt, ok := q.lastReportedAt[identity]; ok && now.Sub(lastReportedAt) < q.dedupeWindow {
 		q.mu.Unlock()
-
-		if q.onExposureDropped != nil {
-			safeInvoke(func() { q.onExposureDropped(1) })
-		}
 
 		return
 	}
 
+	if len(q.buffer) >= q.capacity {
+		q.droppedSinceLastReport++
+
+		q.mu.Unlock()
+
+		return
+	}
+
+	q.lastReportedAt[identity] = now
 	q.buffer = append(q.buffer, event)
 	shouldFlush := len(q.buffer) >= q.batchSize
 
@@ -200,21 +268,44 @@ func (q *exposureQueue) run() {
 	}
 }
 
+// flush runs once per cycle of run()'s loop (ticker, signalFlush, or the
+// final call from close()): sweeps expired dedupe entries, reports any
+// capacity drops accumulated since the last cycle, and submits whatever is
+// queued, if anything.
 func (q *exposureQueue) flush() {
 	q.mu.Lock()
 
-	if len(q.buffer) == 0 {
-		q.mu.Unlock()
+	q.pruneDedupeWindowLocked(time.Now())
 
-		return
-	}
+	dropped := q.droppedSinceLastReport
+	q.droppedSinceLastReport = 0
 
 	batch := q.buffer
 	q.buffer = nil
 
 	q.mu.Unlock()
 
+	if dropped > 0 && q.onExposureDropped != nil {
+		count := dropped
+
+		safeInvoke(func() { q.onExposureDropped(count) })
+	}
+
+	if len(batch) == 0 {
+		return
+	}
+
 	q.submit(batch)
+}
+
+// pruneDedupeWindowLocked removes dedupe entries whose window has elapsed,
+// bounding memory for identities that stop recurring. Caller must hold mu.
+func (q *exposureQueue) pruneDedupeWindowLocked(now time.Time) {
+	for identity, reportedAt := range q.lastReportedAt {
+		if now.Sub(reportedAt) >= q.dedupeWindow {
+			delete(q.lastReportedAt, identity)
+		}
+	}
 }
 
 // submit POSTs batch as a single request. On failure the batch is dropped

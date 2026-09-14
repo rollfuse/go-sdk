@@ -17,6 +17,7 @@ type clientConfig struct {
 	exposureQueueCapacity int
 	exposureBatchSize     int
 	exposureFlushInterval time.Duration
+	exposureDedupeWindow  time.Duration
 	onConfigRefreshed     func(version int64)
 	onConfigRefreshError  func(err error)
 	onExposureDropped     func(count int)
@@ -72,6 +73,17 @@ func WithExposureBatchSize(n int) Option {
 // batch flushes (default 5s).
 func WithExposureFlushInterval(d time.Duration) Option {
 	return func(cfg *clientConfig) { cfg.exposureFlushInterval = d }
+}
+
+// WithExposureDedupeWindow sets the width of the window an observation
+// identity (flag, subject, served variation, configuration version) is
+// reported once within (default 60s). A repeated evaluation with the same
+// identity inside the window is not re-enqueued; once the window elapses
+// since the identity was last reported, the next matching evaluation is
+// treated as a new observation. A changed variation or configuration
+// version is always a different identity, regardless of timing.
+func WithExposureDedupeWindow(d time.Duration) Option {
+	return func(cfg *clientConfig) { cfg.exposureDedupeWindow = d }
 }
 
 // WithOnConfigRefreshed registers a callback invoked after each successful
@@ -163,6 +175,7 @@ func NewClient(baseURL, credential string, opts ...Option) (*Client, error) {
 		capacity:              cfg.exposureQueueCapacity,
 		batchSize:             cfg.exposureBatchSize,
 		flushInterval:         cfg.exposureFlushInterval,
+		dedupeWindow:          cfg.exposureDedupeWindow,
 		httpClient:            cfg.httpClient,
 		onExposureDropped:     cfg.onExposureDropped,
 		onExposureSubmitError: cfg.onExposureSubmitError,
