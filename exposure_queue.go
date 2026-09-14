@@ -157,7 +157,7 @@ func (q *exposureQueue) enqueue(e queuedExposure) {
 		q.mu.Unlock()
 
 		if q.onExposureDropped != nil {
-			q.onExposureDropped(1)
+			safeInvoke(func() { q.onExposureDropped(1) })
 		}
 
 		return
@@ -262,7 +262,7 @@ func (q *exposureQueue) submit(batch []exposureEventSubmission) {
 
 func (q *exposureQueue) reportSubmitError(err error) {
 	if q.onExposureSubmitError != nil {
-		q.onExposureSubmitError(err)
+		safeInvoke(func() { q.onExposureSubmitError(err) })
 	}
 }
 

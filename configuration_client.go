@@ -214,10 +214,13 @@ func (c *configurationClient) attemptFetch() bool {
 
 	c.config.Store(&cfg)
 	c.lastFetchedAt.Store(time.Now().UnixNano())
+	// Readiness (closing c.ready) happens before the integrator's own
+	// callback runs, matching sdk-conformance's "Readiness resolves
+	// before callbacks run" scenario.
 	c.readyOnce.Do(func() { close(c.ready) })
 
 	if c.onConfigRefreshed != nil {
-		c.onConfigRefreshed(cfg.Version)
+		safeInvoke(func() { c.onConfigRefreshed(cfg.Version) })
 	}
 
 	return true
@@ -225,6 +228,6 @@ func (c *configurationClient) attemptFetch() bool {
 
 func (c *configurationClient) reportError(err error) {
 	if c.onConfigRefreshError != nil {
-		c.onConfigRefreshError(err)
+		safeInvoke(func() { c.onConfigRefreshError(err) })
 	}
 }
