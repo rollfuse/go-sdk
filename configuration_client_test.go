@@ -3,6 +3,7 @@ package rollfuse
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -337,6 +338,63 @@ func TestConfigurationClient_StartReturnsCtxErrIfNeverSucceeds(t *testing.T) {
 	err := c.start(ctx)
 	if err == nil {
 		t.Fatal("expected an error when ctx is done before any fetch succeeds")
+	}
+}
+
+// TestConfigurationClient_CredentialRejectionFailsFastWithoutRetry proves
+// task 2.2 for go-sdk: a 401/403 response fails start() immediately (well
+// under the poll interval, let alone the ctx deadline) and never causes a
+// second request, since retrying a rejected credential can only ever
+// reproduce the same rejection. Manually verified load-bearing: with the
+// 401/403 branch's condition short-circuited to always-false, this test's
+// duration assertion failed (start() instead blocked until the 2s ctx
+// deadline) and its request-count assertion failed (multiple requests were
+// made); reverted before committing.
+func TestConfigurationClient_CredentialRejectionFailsFastWithoutRetry(t *testing.T) {
+	var requestCount atomic.Int64
+
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			requestCount.Store(0)
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requestCount.Add(1)
+				w.WriteHeader(status)
+			}))
+			defer server.Close()
+
+			c := newConfigurationClient(server.URL, "svc_bogus.invalid", configurationClientOptions{
+				refreshInterval: 20 * time.Millisecond,
+			})
+			defer c.close()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+
+			start := time.Now()
+			err := c.start(ctx)
+			elapsed := time.Since(start)
+
+			if err == nil {
+				t.Fatal("expected an error for a rejected credential")
+			}
+
+			if !errors.Is(err, ErrCredentialRejected) {
+				t.Fatalf("expected errors.Is(err, ErrCredentialRejected), got: %v", err)
+			}
+
+			if elapsed > 200*time.Millisecond {
+				t.Fatalf("expected start() to fail fast, took %s (nowhere near the 2s ctx deadline)", elapsed)
+			}
+
+			// Give the poll loop a chance to schedule a second attempt, if
+			// (wrongly) it still would.
+			time.Sleep(100 * time.Millisecond)
+
+			if got := requestCount.Load(); got != 1 {
+				t.Fatalf("expected exactly 1 request (no retry after a terminal rejection), got %d", got)
+			}
+		})
 	}
 }
 
