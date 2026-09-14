@@ -113,6 +113,79 @@ func TestConfigurationClient_MalformedResponseDoesNotReplaceCache(t *testing.T) 
 	}
 }
 
+// TestConfigurationClient_MalformedElementDoesNotReplaceCache exercises
+// harden-sdk-runtime task 5.1/5.2's "Validation covers element shape"
+// scenario: the top-level containers (flags/rules/rollout arrays) are all
+// present and well-formed here, only a single element deep inside is
+// malformed (a rollout split's percentage sent as a string, not a
+// number). Go's static typing means json.Decode itself rejects this —
+// there is no separate "container looked fine, only its element didn't"
+// code path to bypass the way there was in the JS clients before task
+// 5.1 (see js-sdk's isValidVariation/isValidRule), since a struct field's
+// type mismatch fails the whole decode rather than leaving a zero value in
+// just that element. This test proves the existing decode-error path
+// already satisfies the scenario for this client, rather than that new
+// validation code was required here.
+func TestConfigurationClient_MalformedElementDoesNotReplaceCache(t *testing.T) {
+	var requestCount atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := requestCount.Add(1)
+
+		w.Header().Set("Content-Type", "application/json")
+
+		if n == 1 {
+			_, _ = w.Write(testConfigJSON(1))
+
+			return
+		}
+
+		// Well-formed containers throughout; only rollout[0].percentage
+		// is the wrong JSON type (string instead of number).
+		_, _ = w.Write([]byte(`{
+			"environment_id": "env_1",
+			"version": 2,
+			"flags": [{
+				"flag_key": "checkout-redesign",
+				"enabled": true,
+				"default_variation": "off",
+				"variations": [{"key": "on", "value": true}, {"key": "off", "value": false}],
+				"rules": [{
+					"conditions": [],
+					"outcome": {"rollout": [{"variation_key": "on", "percentage": "fifty"}]}
+				}]
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	errCh := make(chan error, 10)
+
+	c := newConfigurationClient(server.URL, "cred", configurationClientOptions{
+		refreshInterval:      20 * time.Millisecond,
+		onConfigRefreshError: func(err error) { errCh <- err },
+	})
+	defer c.close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := c.start(ctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	select {
+	case <-errCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected onConfigRefreshError to be called after the malformed-element response")
+	}
+
+	cfg := c.getConfig()
+	if cfg == nil || cfg.Version != 1 {
+		t.Fatalf("expected cache to remain at version 1, got %+v", cfg)
+	}
+}
+
 func TestConfigurationClient_RepeatedFailuresKeepLastKnownGood(t *testing.T) {
 	var requestCount atomic.Int32
 

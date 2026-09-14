@@ -129,6 +129,72 @@ func TestEvaluateFlag_UnresolvableOutcomeFallsBack(t *testing.T) {
 	}
 }
 
+// TestEvaluateFlag_NeverPanicsOnUnexpectedShape exercises
+// harden-sdk-runtime task 5.3's "Evaluation with an unexpected shape"
+// scenario. Go's structs cannot hold a truly arbitrary shape the way a
+// dynamically-typed language's decoded JSON value can — there is no
+// pointer field here to be nil, and json.Unmarshal leaves an omitted or
+// mistyped-then-rejected field at its zero value rather than an unsafe
+// one — so every case below is a zero-value or otherwise degenerate but
+// well-typed FlagConfig a caller could still construct directly (bypassing
+// configurationClient's own fetch-time validation entirely, exactly as a
+// direct caller of evaluate.ts's exported evaluateFlag can in the JS
+// clients). Every case must return the flag's default variation rather
+// than panicking.
+func TestEvaluateFlag_NeverPanicsOnUnexpectedShape(t *testing.T) {
+	cases := map[string]rollfuse.FlagConfig{
+		"zero-value FlagConfig": {},
+		"nil Variations, rule referencing a variation": {
+			FlagKey: "f", Enabled: true, DefaultVariation: "off",
+			Rules: []rollfuse.Rule{{Outcome: rollfuse.Outcome{VariationKey: "on"}}},
+		},
+		"nil Rules": {
+			FlagKey: "f", Enabled: true, DefaultVariation: "off",
+			Variations: []rollfuse.Variation{{Key: "off"}},
+		},
+		"a Rule with a zero-value Outcome (no VariationKey, no Rollout)": {
+			FlagKey: "f", Enabled: true, DefaultVariation: "off",
+			Variations: []rollfuse.Variation{{Key: "off"}},
+			Rules:      []rollfuse.Rule{{Outcome: rollfuse.Outcome{}}},
+		},
+		"a rollout split with a zero Percentage": {
+			FlagKey: "f", Enabled: true, DefaultVariation: "off",
+			Variations: []rollfuse.Variation{{Key: "off"}},
+			Rules: []rollfuse.Rule{{Outcome: rollfuse.Outcome{
+				Rollout: []rollfuse.RolloutSplit{{VariationKey: "on", Percentage: 0}},
+			}}},
+		},
+		"DefaultVariation not present among Variations": {
+			FlagKey: "f", Enabled: false, DefaultVariation: "does-not-exist",
+			Variations: []rollfuse.Variation{{Key: "off"}},
+		},
+		"a Condition with an empty Attribute": {
+			FlagKey: "f", Enabled: true, DefaultVariation: "off",
+			Variations: []rollfuse.Variation{{Key: "off"}},
+			Rules: []rollfuse.Rule{{
+				Conditions: []rollfuse.Condition{{Attribute: "", Value: "x"}},
+				Outcome:    rollfuse.Outcome{VariationKey: "off"},
+			}},
+		},
+	}
+
+	for name, flag := range cases {
+		t.Run(name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("EvaluateFlag panicked: %v", r)
+				}
+			}()
+
+			result := rollfuse.EvaluateFlag(flag, 1, "user_1", nil)
+
+			if result.Reason == "" {
+				t.Fatalf("expected a non-empty reason, got %+v", result)
+			}
+		})
+	}
+}
+
 func TestEvaluateFlag_Deterministic(t *testing.T) {
 	flag := testFlag(func(f *rollfuse.FlagConfig) {
 		f.Rules = []rollfuse.Rule{
