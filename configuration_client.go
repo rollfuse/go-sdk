@@ -17,6 +17,10 @@ const (
 	defaultRefreshInterval = 30 * time.Second
 	baseBackoff            = 1 * time.Second
 	maxBackoff             = 30 * time.Second
+	// defaultRequestTimeout bounds a single GET /v1/config request,
+	// matching exposure_queue.go's own submitTimeout — see
+	// requestTimeout's own doc comment.
+	defaultRequestTimeout = 10 * time.Second
 )
 
 // configurationClientOptions configures a configurationClient. Populated by
@@ -25,6 +29,7 @@ const (
 type configurationClientOptions struct {
 	refreshInterval      time.Duration
 	maxConfigAge         time.Duration
+	requestTimeout       time.Duration
 	httpClient           *http.Client
 	onConfigRefreshed    func(version int64)
 	onConfigRefreshError func(err error)
@@ -40,10 +45,19 @@ type configurationClientOptions struct {
 // internal lifecycle context independent of that ctx, stopped only by
 // close.
 type configurationClient struct {
-	baseURL              string
-	credential           string
-	refreshInterval      time.Duration
-	maxConfigAge         time.Duration
+	baseURL         string
+	credential      string
+	refreshInterval time.Duration
+	maxConfigAge    time.Duration
+	// requestTimeout bounds a single GET /v1/config request via a
+	// context.WithTimeout derived from lifecycleCtx, per sdk-conformance's
+	// "Every Network Operation Carries A Deadline" requirement: the
+	// default http.Client this package falls back to (http.DefaultClient)
+	// has Timeout == 0, no deadline at all, so a hung connection would
+	// otherwise stall attemptFetch — and with it, the entire poll loop,
+	// since pollLoop only schedules its next attempt after the current
+	// one returns — indefinitely.
+	requestTimeout       time.Duration
 	httpClient           *http.Client
 	onConfigRefreshed    func(version int64)
 	onConfigRefreshError func(err error)
@@ -67,6 +81,11 @@ func newConfigurationClient(baseURL, credential string, opts configurationClient
 		refreshInterval = defaultRefreshInterval
 	}
 
+	requestTimeout := opts.requestTimeout
+	if requestTimeout <= 0 {
+		requestTimeout = defaultRequestTimeout
+	}
+
 	httpClient := opts.httpClient
 	if httpClient == nil {
 		httpClient = http.DefaultClient
@@ -77,6 +96,7 @@ func newConfigurationClient(baseURL, credential string, opts configurationClient
 		credential:           credential,
 		refreshInterval:      refreshInterval,
 		maxConfigAge:         opts.maxConfigAge,
+		requestTimeout:       requestTimeout,
 		httpClient:           httpClient,
 		onConfigRefreshed:    opts.onConfigRefreshed,
 		onConfigRefreshError: opts.onConfigRefreshError,
@@ -176,7 +196,10 @@ func (c *configurationClient) nextBackoff() time.Duration {
 }
 
 func (c *configurationClient) attemptFetch() bool {
-	req, err := http.NewRequestWithContext(c.lifecycleCtx, http.MethodGet, c.baseURL+"/v1/config", nil)
+	ctx, cancel := context.WithTimeout(c.lifecycleCtx, c.requestTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/config", nil)
 	if err != nil {
 		c.reportError(fmt.Errorf("building GET /v1/config request: %w", err))
 
