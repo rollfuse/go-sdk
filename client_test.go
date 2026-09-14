@@ -406,6 +406,16 @@ func TestClient_ExposureReporting_FullQueueDropsAndReports(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
+	// Drops are now aggregated and reported once per flush cycle (task
+	// 7.5), rather than synchronously inside Evaluate/enqueue.
+	if got := dropped.Load(); got != 0 {
+		t.Fatalf("expected no drops reported yet, got %d", got)
+	}
+
+	if err := client.Close(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
 	if got := dropped.Load(); got != 1 {
 		t.Fatalf("expected exactly 1 dropped exposure, got %d", got)
 	}
