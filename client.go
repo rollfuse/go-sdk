@@ -8,12 +8,17 @@ import (
 	"time"
 )
 
+// defaultCloseTimeout bounds Close() — see WithCloseTimeout's own doc
+// comment.
+const defaultCloseTimeout = 5 * time.Second
+
 // clientConfig accumulates every Option before Client construction.
 type clientConfig struct {
 	httpClient            *http.Client
 	refreshInterval       time.Duration
 	maxConfigAge          time.Duration
 	requestTimeout        time.Duration
+	closeTimeout          time.Duration
 	exposureQueueCapacity int
 	exposureBatchSize     int
 	exposureFlushInterval time.Duration
@@ -46,6 +51,13 @@ func WithRefreshInterval(d time.Duration) Option {
 // comment.
 func WithRequestTimeout(d time.Duration) Option {
 	return func(cfg *clientConfig) { cfg.requestTimeout = d }
+}
+
+// WithCloseTimeout bounds Close(): it returns once every pending exposure
+// has flushed, or once d elapses, whichever comes first, per
+// sdk-conformance's "A server process shuts down" scenario. Default 5s.
+func WithCloseTimeout(d time.Duration) Option {
+	return func(cfg *clientConfig) { cfg.closeTimeout = d }
 }
 
 // WithMaxConfigAge makes Evaluate/EvaluateAll treat the cached
@@ -146,6 +158,7 @@ func WithFallback(value any) EvaluateOption {
 type Client struct {
 	configClient  *configurationClient
 	exposureQueue *exposureQueue
+	closeTimeout  time.Duration
 }
 
 // NewClient constructs a Client for baseURL, authenticated with
@@ -181,7 +194,12 @@ func NewClient(baseURL, credential string, opts ...Option) (*Client, error) {
 		onExposureSubmitError: cfg.onExposureSubmitError,
 	})
 
-	return &Client{configClient: configClient, exposureQueue: queue}, nil
+	closeTimeout := cfg.closeTimeout
+	if closeTimeout <= 0 {
+		closeTimeout = defaultCloseTimeout
+	}
+
+	return &Client{configClient: configClient, exposureQueue: queue, closeTimeout: closeTimeout}, nil
 }
 
 // Start begins background Configuration polling and exposure-batch
@@ -189,18 +207,40 @@ func NewClient(baseURL, credential string, opts ...Option) (*Client, error) {
 // done; callers that don't want to block startup on it can call
 // Start(context.Background()) in a goroutine without waiting on it, and
 // rely on Evaluate's WithFallback option until the first fetch lands.
+// Safe to call again after Stop() (task 8.3): resumes polling and
+// reporting rather than leaving the Client permanently inert.
 func (c *Client) Start(ctx context.Context) error {
 	c.exposureQueue.start()
 
 	return c.configClient.start(ctx)
 }
 
+// Stop halts background polling and flushing without submitting queued
+// exposures. Safe to call whether or not Start was ever called, and safe
+// to call more than once. A later Start resumes both (task 8.3).
+func (c *Client) Stop() {
+	c.configClient.stop()
+	c.exposureQueue.stop()
+}
+
 // Close stops background polling and flushing, and submits any remaining
-// queued exposures before returning. Always returns nil; the error return
-// exists for future-proofing and io.Closer-shaped call sites.
+// queued exposures, bounded by WithCloseTimeout (default 5s, task 8.2):
+// returns once flushed or once the bound elapses, whichever comes first.
+// Always returns nil; the error return exists for future-proofing and
+// io.Closer-shaped call sites.
 func (c *Client) Close() error {
-	c.configClient.close()
-	c.exposureQueue.close()
+	done := make(chan struct{})
+
+	go func() {
+		c.configClient.close()
+		c.exposureQueue.close()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(c.closeTimeout):
+	}
 
 	return nil
 }

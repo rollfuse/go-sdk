@@ -42,21 +42,22 @@ type configurationClientOptions struct {
 // (openspec/specs/sdk-go/spec.md's "Concurrency-Safe Evaluation"
 // requirement); start blocks the caller until the first successful fetch
 // or its ctx is done, while the background refresh loop runs on an
-// internal lifecycle context independent of that ctx, stopped only by
-// close.
+// internal lifecycle context independent of that ctx. stop halts that
+// loop; start after stop resumes it (task 8.3) rather than leaving the
+// client permanently inert.
 type configurationClient struct {
 	baseURL         string
 	credential      string
 	refreshInterval time.Duration
 	maxConfigAge    time.Duration
 	// requestTimeout bounds a single GET /v1/config request via a
-	// context.WithTimeout derived from lifecycleCtx, per sdk-conformance's
-	// "Every Network Operation Carries A Deadline" requirement: the
-	// default http.Client this package falls back to (http.DefaultClient)
-	// has Timeout == 0, no deadline at all, so a hung connection would
-	// otherwise stall attemptFetch — and with it, the entire poll loop,
-	// since pollLoop only schedules its next attempt after the current
-	// one returns — indefinitely.
+	// context.WithTimeout derived from the poll loop's current lifecycle
+	// context, per sdk-conformance's "Every Network Operation Carries A
+	// Deadline" requirement: the default http.Client this package falls
+	// back to (http.DefaultClient) has Timeout == 0, no deadline at all,
+	// so a hung connection would otherwise stall attemptFetch — and with
+	// it, the entire poll loop, since pollLoop only schedules its next
+	// attempt after the current one returns — indefinitely.
 	requestTimeout       time.Duration
 	httpClient           *http.Client
 	onConfigRefreshed    func(version int64)
@@ -66,16 +67,19 @@ type configurationClient struct {
 	lastFetchedAt atomic.Int64 // UnixNano; 0 means never fetched
 	backoff       time.Duration
 
+	// lifecycleMu protects running/lifecycleCtx/lifecycleCancel across
+	// start()/stop() cycles.
+	lifecycleMu     sync.Mutex
+	running         bool
 	lifecycleCtx    context.Context
 	lifecycleCancel context.CancelFunc
-	startOnce       sync.Once
-	ready           chan struct{}
-	readyOnce       sync.Once
+	wg              sync.WaitGroup
+
+	ready     chan struct{}
+	readyOnce sync.Once
 }
 
 func newConfigurationClient(baseURL, credential string, opts configurationClientOptions) *configurationClient {
-	lifecycleCtx, cancel := context.WithCancel(context.Background())
-
 	refreshInterval := opts.refreshInterval
 	if refreshInterval <= 0 {
 		refreshInterval = defaultRefreshInterval
@@ -101,33 +105,70 @@ func newConfigurationClient(baseURL, credential string, opts configurationClient
 		onConfigRefreshed:    opts.onConfigRefreshed,
 		onConfigRefreshError: opts.onConfigRefreshError,
 		backoff:              baseBackoff,
-		lifecycleCtx:         lifecycleCtx,
-		lifecycleCancel:      cancel,
 		ready:                make(chan struct{}),
 	}
 }
 
-// start begins the background poll loop (on first call only) and blocks
-// until the first fetch succeeds, ctx is done, or the client is closed.
+// start begins the background poll loop and blocks until the first fetch
+// succeeds, ctx is done, or the client's own lifecycle ends. Safe to call
+// again after stop() (task 8.3): resumes polling rather than remaining
+// permanently inert. A plain repeated call while already running returns
+// the same in-flight/already-settled readiness.
 func (c *configurationClient) start(ctx context.Context) error {
-	c.startOnce.Do(func() {
-		go c.pollLoop()
-	})
+	c.lifecycleMu.Lock()
+
+	if !c.running {
+		lifecycleCtx, cancel := context.WithCancel(context.Background())
+		c.lifecycleCtx = lifecycleCtx
+		c.lifecycleCancel = cancel
+		c.running = true
+
+		c.wg.Add(1)
+
+		go c.pollLoop(lifecycleCtx)
+	}
+
+	lifecycleCtx := c.lifecycleCtx
+
+	c.lifecycleMu.Unlock()
 
 	select {
 	case <-c.ready:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-c.lifecycleCtx.Done():
-		return c.lifecycleCtx.Err()
+	case <-lifecycleCtx.Done():
+		return lifecycleCtx.Err()
 	}
 }
 
-// close stops the background poll loop. Safe to call whether or not
-// start was ever called.
+// stop halts the background poll loop and waits for it to fully exit
+// before returning — so a subsequent start() never races a
+// still-shutting-down previous goroutine. Safe to call whether or not
+// start was ever called, and safe to call more than once.
+func (c *configurationClient) stop() {
+	c.lifecycleMu.Lock()
+
+	if !c.running {
+		c.lifecycleMu.Unlock()
+
+		return
+	}
+
+	c.running = false
+	cancel := c.lifecycleCancel
+
+	c.lifecycleMu.Unlock()
+
+	cancel()
+	c.wg.Wait()
+}
+
+// close halts the background poll loop. An alias for stop(): this client
+// owns no other resource (no connection pool of its own) that would need
+// separate releasing.
 func (c *configurationClient) close() {
-	c.lifecycleCancel()
+	c.stop()
 }
 
 // getConfig returns the currently cached Configuration, or nil if none
@@ -155,15 +196,21 @@ func (c *configurationClient) isStale() bool {
 	return time.Since(time.Unix(0, last)) > c.maxConfigAge
 }
 
-func (c *configurationClient) pollLoop() {
+// pollLoop runs strictly within one start()/stop() cycle: ctx is captured
+// at the call site (start()) rather than read from a live field, so a
+// goroutine from a previous cycle can never observe a later cycle's
+// context.
+func (c *configurationClient) pollLoop(ctx context.Context) {
+	defer c.wg.Done()
+
 	for {
 		select {
-		case <-c.lifecycleCtx.Done():
+		case <-ctx.Done():
 			return
 		default:
 		}
 
-		succeeded := c.attemptFetch()
+		succeeded := c.attemptFetch(ctx)
 
 		delay := c.refreshInterval
 		if !succeeded {
@@ -175,7 +222,7 @@ func (c *configurationClient) pollLoop() {
 		timer := time.NewTimer(delay)
 
 		select {
-		case <-c.lifecycleCtx.Done():
+		case <-ctx.Done():
 			timer.Stop()
 
 			return
@@ -195,8 +242,8 @@ func (c *configurationClient) nextBackoff() time.Duration {
 	return delay
 }
 
-func (c *configurationClient) attemptFetch() bool {
-	ctx, cancel := context.WithTimeout(c.lifecycleCtx, c.requestTimeout)
+func (c *configurationClient) attemptFetch(parentCtx context.Context) bool {
+	ctx, cancel := context.WithTimeout(parentCtx, c.requestTimeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/config", nil)

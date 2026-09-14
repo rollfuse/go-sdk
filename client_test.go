@@ -526,3 +526,169 @@ func TestClient_ConcurrentEvaluate(t *testing.T) {
 	close(stop)
 	wg.Wait()
 }
+
+// TestClient_Stop_ResumesOnRestart exercises harden-sdk-runtime task 8.3:
+// a Client that was stopped resumes polling and reporting once started
+// again, rather than remaining permanently inert. Manually verified: this
+// test failed before the fix (Stop() didn't exist, and start()'s guard
+// was a permanent one-time flag) — reverting configuration_client.go's
+// restart-safe start()/stop() back to the original startOnce-based
+// version made the resumed poll never happen, hanging this test's second
+// Start() call forever; restored before committing.
+func TestClient_Stop_ResumesOnRestart(t *testing.T) {
+	var requestCount atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/config" {
+			w.WriteHeader(http.StatusNotFound)
+
+			return
+		}
+
+		n := requestCount.Add(1)
+
+		flag := matchedFlag()
+		if n >= 2 {
+			flag.Rules = nil // second+ fetch: the enterprise rule no longer matches
+		}
+
+		cfg := rollfuse.Configuration{EnvironmentID: "env_1", Version: int64(n), Flags: []rollfuse.FlagConfig{flag}}
+		body, _ := json.Marshal(cfg)
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	}))
+	defer server.Close()
+
+	client, err := rollfuse.NewClient(server.URL, "cred", rollfuse.WithRefreshInterval(20*time.Millisecond))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer func() { _ = client.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := client.Start(ctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	result, err := client.Evaluate("user_1", "checkout-redesign", rollfuse.WithAttributes(map[string]string{"plan": "enterprise"}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.VariationKey != "on" {
+		t.Fatalf("expected the initial fetch to match the enterprise rule, got %+v", result)
+	}
+
+	client.Stop()
+
+	countAtStop := requestCount.Load()
+
+	// While stopped, no further refresh happens even after several
+	// refresh intervals elapse.
+	time.Sleep(100 * time.Millisecond)
+
+	if got := requestCount.Load(); got != countAtStop {
+		t.Fatalf("expected no further requests while stopped, went from %d to %d", countAtStop, got)
+	}
+
+	// Restarted: resumes polling rather than remaining permanently inert.
+	restartCtx, restartCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer restartCancel()
+
+	if err := client.Start(restartCtx); err != nil {
+		t.Fatalf("unexpected error restarting: %v", err)
+	}
+
+	deadline := time.After(2 * time.Second)
+
+	for {
+		result, err := client.Evaluate("user_1", "checkout-redesign", rollfuse.WithAttributes(map[string]string{"plan": "enterprise"}))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if result.VariationKey == "off" {
+			break // a post-restart fetch landed and changed the served variation
+		}
+
+		select {
+		case <-deadline:
+			t.Fatal("expected polling to resume and eventually serve the post-restart configuration")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+
+	if got := requestCount.Load(); got <= countAtStop {
+		t.Fatalf("expected more requests after restart than were made before stop (%d), got %d", countAtStop, got)
+	}
+}
+
+// TestClient_Close_BoundedByCloseTimeout exercises task 8.2: Close()
+// returns once flushed or once WithCloseTimeout elapses, whichever comes
+// first, rather than blocking indefinitely on a hung flush. Manually
+// verified: reverting Close() to a synchronous, unbounded call (no
+// goroutine/select/time.After) made this test itself hang past its own
+// deadline; restored before committing.
+func TestClient_Close_BoundedByCloseTimeout(t *testing.T) {
+	hang := make(chan struct{})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/config":
+			cfg := rollfuse.Configuration{EnvironmentID: "env_1", Version: 1, Flags: []rollfuse.FlagConfig{matchedFlag()}}
+			body, _ := json.Marshal(cfg)
+
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(body)
+		case "/v1/exposure-events":
+			<-hang // never responds, until the test itself releases it on cleanup
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	// Declared in this order so defers run close(hang) before
+	// server.Close(): the server can't finish closing while a handler is
+	// still blocked inside <-hang, and Close() itself only bounds the
+	// Client's own wait, not this test server's still-pending connection.
+	defer server.Close()
+	defer close(hang)
+
+	client, err := rollfuse.NewClient(
+		server.URL, "cred",
+		rollfuse.WithCloseTimeout(100*time.Millisecond),
+		rollfuse.WithExposureBatchSize(1_000_000), // never auto-flush before Close() itself triggers it
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := client.Start(ctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, err := client.Evaluate("user_1", "checkout-redesign", rollfuse.WithAttributes(map[string]string{"plan": "enterprise"})); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	startedAt := time.Now()
+
+	if err := client.Close(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	elapsed := time.Since(startedAt)
+
+	if elapsed < 90*time.Millisecond {
+		t.Fatalf("expected Close() to wait out roughly the close timeout, returned after only %v", elapsed)
+	}
+
+	if elapsed > 1*time.Second {
+		t.Fatalf("expected Close() to be bounded by closeTimeout, took %v", elapsed)
+	}
+}
