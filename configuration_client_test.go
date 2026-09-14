@@ -313,3 +313,83 @@ func TestConfigurationClient_ConcurrentReadsDuringRefresh(t *testing.T) {
 	close(stop)
 	wg.Wait()
 }
+
+// TestConfigurationClient_PanickingOnConfigRefreshedDoesNotCrash exercises
+// harden-sdk-runtime task 3.4: a panicking OnConfigRefreshed must not
+// terminate the process. Unlike a JavaScript exception, an unrecovered Go
+// panic kills the entire test binary regardless of which goroutine it
+// originates in — so the mere fact that this test (and every one after
+// it) runs to completion is itself part of the proof; the explicit
+// assertions additionally confirm start() still succeeds and the client's
+// own state (readiness, cached config) advanced normally despite the
+// panic.
+func TestConfigurationClient_PanickingOnConfigRefreshedDoesNotCrash(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(testConfigJSON(5))
+	}))
+	defer server.Close()
+
+	var callbackRan atomic.Bool
+
+	c := newConfigurationClient(server.URL, "cred", configurationClientOptions{
+		onConfigRefreshed: func(int64) {
+			callbackRan.Store(true)
+			panic("integrator's success callback itself panics")
+		},
+	})
+	defer c.close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := c.start(ctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !callbackRan.Load() {
+		t.Fatal("expected the panicking callback to have been invoked")
+	}
+
+	if cfg := c.getConfig(); cfg == nil || cfg.Version != 5 {
+		t.Fatalf("expected cached config version 5 despite the panic, got %+v", cfg)
+	}
+}
+
+// TestConfigurationClient_PanickingOnConfigRefreshErrorDoesNotCrash is the
+// same proof for the error-reporting callback (task 3.4), across several
+// consecutive failed refresh attempts, not only the first.
+func TestConfigurationClient_PanickingOnConfigRefreshErrorDoesNotCrash(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	var callbackCount atomic.Int64
+
+	c := newConfigurationClient(server.URL, "cred", configurationClientOptions{
+		onConfigRefreshError: func(error) {
+			callbackCount.Add(1)
+			panic("integrator's error callback itself panics")
+		},
+	})
+	defer c.close()
+
+	// The server never returns a valid config, so start() blocks until
+	// its own ctx is done; baseBackoff (1s, unexported and not
+	// configurable via options, matching @rollfuse/js-sdk's own hardcoded
+	// BASE_BACKOFF_MS) is the retry interval after the first, immediate
+	// attempt, so this needs to span at least one retry to prove the
+	// background poll loop survives more than the very first panic.
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+
+	// Expected to time out (the server never returns a valid config); the
+	// point is that reaching this line at all, more than once, proves the
+	// background poll loop survived a panicking callback on every retry.
+	_ = c.start(ctx)
+
+	if got := callbackCount.Load(); got < 2 {
+		t.Fatalf("expected the panicking error callback to have been invoked more than once, got %d", got)
+	}
+}
