@@ -99,6 +99,22 @@ type configurationClient struct {
 
 	ready     chan struct{}
 	readyOnce sync.Once
+	// readyErr is set (from attemptFetch, before closing ready) only on a
+	// terminal credential rejection, never on an ordinary transient
+	// failure — ready itself still only ever closes on a successful fetch
+	// or a terminal failure, never on an ordinary one, so a caller whose
+	// ctx is merely slower than a real transient outage doesn't
+	// misreport it as terminal. Written at most once, always before
+	// ready closes, by attemptFetch alone (pollLoop runs one attempt at a
+	// time, same reasoning as etag's own doc comment); readyErr's write
+	// happens-before start()'s read via <-c.ready's channel-close
+	// synchronization, so no separate lock is needed.
+	readyErr error
+	// terminallyFailed stops pollLoop from scheduling another attempt
+	// once the credential has been rejected (task 2.2): every subsequent
+	// GET /v1/config would fail identically, so retrying is pure waste
+	// (and, unlike an ordinary transient failure, never self-heals).
+	terminallyFailed atomic.Bool
 }
 
 func newConfigurationClient(baseURL, credential string, opts configurationClientOptions) *configurationClient {
@@ -169,7 +185,7 @@ func (c *configurationClient) start(ctx context.Context) error {
 
 	select {
 	case <-c.ready:
-		return nil
+		return c.readyErr
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-lifecycleCtx.Done():
@@ -247,6 +263,14 @@ func (c *configurationClient) pollLoop(ctx context.Context) {
 
 		succeeded := c.attemptFetch(ctx)
 
+		if c.terminallyFailed.Load() {
+			// A rejected credential never self-heals (task 2.2): every
+			// future attempt would fail identically, so the loop exits
+			// rather than scheduling another one and waiting out
+			// capped backoff forever for nothing.
+			return
+		}
+
 		baseDelay := c.currentRefreshInterval()
 		if !succeeded {
 			baseDelay = c.nextBackoff()
@@ -305,6 +329,21 @@ func (c *configurationClient) attemptFetch(parentCtx context.Context) bool {
 		return false
 	}
 	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		// Fails immediately and is never retried (task 2.2): retrying a
+		// rejected credential can only ever reproduce the same
+		// rejection. terminallyFailed stops pollLoop from scheduling
+		// another attempt.
+		err := fmt.Errorf("%w: status %d", ErrCredentialRejected, resp.StatusCode)
+
+		c.terminallyFailed.Store(true)
+		c.readyErr = err
+		c.readyOnce.Do(func() { close(c.ready) })
+		c.reportError(err)
+
+		return false
+	}
 
 	if resp.StatusCode == http.StatusNotModified {
 		// The platform confirmed the cached Configuration is still

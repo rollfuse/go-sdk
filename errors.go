@@ -17,3 +17,10 @@ var ErrConfigNotReady = errors.New("rollfuse: configuration not yet available")
 // the cached Configuration's own Project (mirroring POST /v1/evaluate's
 // 404 for an unknown flag key) and no fallback was supplied.
 var ErrFlagNotFound = errors.New("rollfuse: flag not found in the cached configuration")
+
+// ErrCredentialRejected is returned (wrapped, with the rejecting status
+// code) by Start when GET /v1/config answers 401 or 403: retrying a
+// rejected credential can only ever reproduce the same rejection, so the
+// configuration client fails immediately and permanently instead of
+// retrying with backoff forever (task 2.2). Match it with errors.Is.
+var ErrCredentialRejected = errors.New("rollfuse: credential was rejected by the platform")
