@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -163,6 +164,11 @@ type Client struct {
 	configClient  *configurationClient
 	exposureQueue *exposureQueue
 	closeTimeout  time.Duration
+
+	// listenersMu protects configChangeListeners/nextListenerID.
+	listenersMu           sync.Mutex
+	configChangeListeners map[int]func()
+	nextListenerID        int
 }
 
 // NewClient constructs a Client for baseURL, authenticated with
@@ -179,16 +185,30 @@ func NewClient(baseURL, credential string, opts ...Option) (*Client, error) {
 		opt(&cfg)
 	}
 
-	configClient := newConfigurationClient(baseURL, credential, configurationClientOptions{
-		refreshInterval:      cfg.refreshInterval,
-		maxConfigAge:         cfg.maxConfigAge,
-		requestTimeout:       cfg.requestTimeout,
-		httpClient:           cfg.httpClient,
-		onConfigRefreshed:    cfg.onConfigRefreshed,
+	client := &Client{
+		closeTimeout:          cfg.closeTimeout,
+		configChangeListeners: make(map[int]func()),
+	}
+	if client.closeTimeout <= 0 {
+		client.closeTimeout = defaultCloseTimeout
+	}
+
+	client.configClient = newConfigurationClient(baseURL, credential, configurationClientOptions{
+		refreshInterval: cfg.refreshInterval,
+		maxConfigAge:    cfg.maxConfigAge,
+		requestTimeout:  cfg.requestTimeout,
+		httpClient:      cfg.httpClient,
+		onConfigRefreshed: func(version int64) {
+			if cfg.onConfigRefreshed != nil {
+				cfg.onConfigRefreshed(version)
+			}
+
+			client.notifyConfigChange()
+		},
 		onConfigRefreshError: cfg.onConfigRefreshError,
 	})
 
-	queue := newExposureQueue(baseURL, credential, exposureQueueOptions{
+	client.exposureQueue = newExposureQueue(baseURL, credential, exposureQueueOptions{
 		capacity:              cfg.exposureQueueCapacity,
 		batchSize:             cfg.exposureBatchSize,
 		flushInterval:         cfg.exposureFlushInterval,
@@ -198,12 +218,41 @@ func NewClient(baseURL, credential string, opts ...Option) (*Client, error) {
 		onExposureSubmitError: cfg.onExposureSubmitError,
 	})
 
-	closeTimeout := cfg.closeTimeout
-	if closeTimeout <= 0 {
-		closeTimeout = defaultCloseTimeout
-	}
+	return client, nil
+}
 
-	return &Client{configClient: configClient, exposureQueue: queue, closeTimeout: closeTimeout}, nil
+// Subscribe registers listener to be called after each successful
+// Configuration refresh that produces a new version (task 10.1: the
+// signal an OpenFeature provider wrapping this Client uses to emit its
+// own configuration-changed event, without needing to be the one that
+// originally constructed the Client with its own WithOnConfigRefreshed).
+// Returns an unsubscribe function. Safe for concurrent use.
+func (c *Client) Subscribe(listener func()) (unsubscribe func()) {
+	c.listenersMu.Lock()
+	id := c.nextListenerID
+	c.nextListenerID++
+	c.configChangeListeners[id] = listener
+	c.listenersMu.Unlock()
+
+	return func() {
+		c.listenersMu.Lock()
+		delete(c.configChangeListeners, id)
+		c.listenersMu.Unlock()
+	}
+}
+
+func (c *Client) notifyConfigChange() {
+	c.listenersMu.Lock()
+
+	listeners := make([]func(), 0, len(c.configChangeListeners))
+	for _, listener := range c.configChangeListeners {
+		listeners = append(listeners, listener)
+	}
+	c.listenersMu.Unlock()
+
+	for _, listener := range listeners {
+		safeInvoke(listener)
+	}
 }
 
 // Start begins background Configuration polling and exposure-batch
