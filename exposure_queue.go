@@ -115,15 +115,19 @@ type exposureQueue struct {
 
 	flushSignal chan struct{}
 
+	// lifecycleMu protects running/lifecycleCtx/lifecycleCancel, separate
+	// from mu (which protects the hot enqueue path): start()/stop() are
+	// rare relative to enqueue(), and stop() must release its lock before
+	// wg.Wait() (run()'s own flush() calls mu, which would deadlock if
+	// stop() held a shared lock across the wait).
+	lifecycleMu     sync.Mutex
+	running         bool
 	lifecycleCtx    context.Context
 	lifecycleCancel context.CancelFunc
-	startOnce       sync.Once
 	wg              sync.WaitGroup
 }
 
 func newExposureQueue(baseURL, credential string, opts exposureQueueOptions) *exposureQueue {
-	lifecycleCtx, cancel := context.WithCancel(context.Background())
-
 	capacity := opts.capacity
 	if capacity <= 0 {
 		capacity = defaultExposureQueueCapacity
@@ -161,26 +165,58 @@ func newExposureQueue(baseURL, credential string, opts exposureQueueOptions) *ex
 		onExposureSubmitError: opts.onExposureSubmitError,
 		lastReportedAt:        make(map[exposureIdentity]time.Time),
 		flushSignal:           make(chan struct{}, 1),
-		lifecycleCtx:          lifecycleCtx,
-		lifecycleCancel:       cancel,
 	}
 }
 
-// start begins the background flush goroutine. Safe to call more than
-// once; only the first call starts it.
+// start begins the background flush goroutine. Safe to call again after
+// stop() (task 8.3): resumes flushing rather than remaining permanently
+// inert. A plain repeated call while already running is a no-op.
 func (q *exposureQueue) start() {
-	q.startOnce.Do(func() {
-		q.wg.Add(1)
+	q.lifecycleMu.Lock()
+	defer q.lifecycleMu.Unlock()
 
-		go q.run()
-	})
+	if q.running {
+		return
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	q.lifecycleCtx = ctx
+	q.lifecycleCancel = cancel
+	q.running = true
+
+	q.wg.Add(1)
+
+	go q.run(ctx)
 }
 
-// close stops the background goroutine, flushing any remaining queued
-// events first, and waits for that final flush to complete.
-func (q *exposureQueue) close() {
-	q.lifecycleCancel()
+// stop halts the background goroutine without submitting queued events,
+// and waits for it to fully exit before returning — so a subsequent
+// start() never races a still-shutting-down previous goroutine. Safe to
+// call whether or not start() was ever called, and safe to call more than
+// once.
+func (q *exposureQueue) stop() {
+	q.lifecycleMu.Lock()
+
+	if !q.running {
+		q.lifecycleMu.Unlock()
+
+		return
+	}
+
+	q.running = false
+	cancel := q.lifecycleCancel
+
+	q.lifecycleMu.Unlock()
+
+	cancel()
 	q.wg.Wait()
+}
+
+// close halts the background goroutine and submits any remaining queued
+// events, unlike stop() alone.
+func (q *exposureQueue) close() {
+	q.stop()
+	q.flush()
 }
 
 // enqueue never blocks and never performs I/O.
@@ -248,7 +284,13 @@ func (q *exposureQueue) signalFlush() {
 	}
 }
 
-func (q *exposureQueue) run() {
+// run processes ticker ticks, signalFlush and ctx cancellation strictly
+// serially in this one goroutine — so flush() (and therefore submit())
+// can never execute concurrently with itself (task 7.6). ctx is captured
+// at the call site (start()) rather than read from q.lifecycleCtx live,
+// so a goroutine from a previous start()/stop() cycle can never observe a
+// later cycle's context.
+func (q *exposureQueue) run(ctx context.Context) {
 	defer q.wg.Done()
 
 	ticker := time.NewTicker(q.flushInterval)
@@ -260,9 +302,11 @@ func (q *exposureQueue) run() {
 			q.flush()
 		case <-q.flushSignal:
 			q.flush()
-		case <-q.lifecycleCtx.Done():
-			q.flush()
-
+		case <-ctx.Done():
+			// No flush here (task 8.3's stop()/start() symmetry with the
+			// Node/browser clients): stop() halts without submitting
+			// queued events; close() (stop() + an explicit flush of its
+			// own) is what submits before shutting down for good.
 			return
 		}
 	}
