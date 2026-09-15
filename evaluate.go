@@ -8,11 +8,24 @@ type Variation struct {
 	Value json.RawMessage `json:"value"`
 }
 
-// RolloutSplit is one entry of a percentage-based rollout Outcome: the
-// share (1-100) of matching subjects that should receive VariationKey.
+// RolloutSplit is one entry of a rollout Outcome: the share of matching
+// subjects that should receive VariationKey. The wire still carries a
+// whole percentage (1-100) as of expand-targeting-model task 2.2 — no
+// format-versioning change has landed yet — but the evaluator's own unit
+// of truth is bucket positions (bucketPositions, out of bucketModulus),
+// computed once from Percentage rather than re-derived per accumulation
+// step, matching the platform's own RolloutSplit.BucketPositions. This is
+// a structural fix, not a behavior change: converting a whole percentage
+// to bucket positions is exact.
 type RolloutSplit struct {
 	VariationKey string `json:"variation_key"`
 	Percentage   int    `json:"percentage"`
+}
+
+// bucketPositions converts this split's wire percentage into bucket
+// positions, the space Outcome.resolve actually accumulates in.
+func (s RolloutSplit) bucketPositions() uint32 {
+	return uint32(s.Percentage) * percentageScale
 }
 
 // Outcome is what a Rule resolves to when it matches: either exactly one
@@ -41,7 +54,7 @@ func (o Outcome) resolve(flagKey, subjectKey string) (string, bool) {
 	var cumulative uint32
 
 	for _, split := range o.Rollout {
-		cumulative += uint32(split.Percentage) * percentageScale
+		cumulative += split.bucketPositions()
 		if bucket < cumulative {
 			return split.VariationKey, true
 		}
