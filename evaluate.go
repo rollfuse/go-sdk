@@ -64,26 +64,49 @@ func (o Outcome) resolve(flagKey, subjectKey string) (string, bool) {
 }
 
 // Condition is one attribute-equality check a Rule requires to match.
+// Deprecated: superseded by Clause (expand-targeting-model section 4),
+// kept only so a Rule published before the wire contract grew Clauses
+// still decodes and matches exactly as before — see Rule.matches.
 type Condition struct {
 	Attribute string `json:"attribute"`
 	Value     string `json:"value"`
 }
 
-// Rule is one entry of a FlagConfig's ordered targeting list, evaluated in
-// order; the first Rule whose conditions match (or that is unconditional)
-// wins.
+// Rule is one entry of a FlagConfig's ordered targeting list, evaluated
+// in order; the first Rule whose clauses match (or that is
+// unconditional) wins. Every one of Clauses MUST match (logical AND) —
+// OR composition, negation and nesting (section 5) are not represented
+// by this flat list yet.
+//
+// A Rule carries EITHER Clauses (the current wire shape) OR Conditions
+// (the shape every Rule had before expand-targeting-model section 4),
+// never both in practice; matches prefers Clauses when present so a
+// config already migrated to the typed model is never re-interpreted
+// through the older, string-only path.
 type Rule struct {
+	Clauses    []Clause    `json:"clauses,omitempty"`
 	Conditions []Condition `json:"conditions,omitempty"`
 	Outcome    Outcome     `json:"outcome"`
 }
 
 // matches reports whether this Rule applies to the given subject
-// attributes. A Rule with no Conditions is an unconditional catch-all and
-// always matches; a missing attribute never matches a Condition.
-func (r Rule) matches(attributes map[string]string) bool {
+// attributes. A Rule with no Clauses and no Conditions is an
+// unconditional catch-all and always matches.
+func (r Rule) matches(attributes map[string]AttributeValue) bool {
+	if len(r.Clauses) > 0 {
+		for _, clause := range r.Clauses {
+			matched, _ := clause.Match(attributes)
+			if !matched {
+				return false
+			}
+		}
+
+		return true
+	}
+
 	for _, condition := range r.Conditions {
 		value, ok := attributes[condition.Attribute]
-		if !ok || value != condition.Value {
+		if !ok || value.Type != AttributeTypeString || value.String != condition.Value {
 			return false
 		}
 	}
@@ -199,7 +222,32 @@ type EvaluationResult struct {
 //     rather than erroring.
 //
 // Never fails: every input resolves to some Variation of flag.
+//
+// attributes is map[string]string for backward compatibility with every
+// caller before expand-targeting-model section 4: each value becomes a
+// string-typed AttributeValue, which only ever matches an "eq"/"neq"/
+// membership/string-operator clause expecting a string — exactly the
+// equality-only behavior this function always had. A caller that needs
+// a typed (number/boolean/list) attribute must use EvaluateFlagTyped.
 func EvaluateFlag(flag FlagConfig, configVersion int64, subjectKey string, attributes map[string]string) EvaluationResult {
+	return EvaluateFlagTyped(flag, configVersion, subjectKey, stringAttributesToTyped(attributes))
+}
+
+func stringAttributesToTyped(attributes map[string]string) map[string]AttributeValue {
+	typed := make(map[string]AttributeValue, len(attributes))
+	for name, value := range attributes {
+		typed[name] = AttributeValue{Type: AttributeTypeString, String: value}
+	}
+
+	return typed
+}
+
+// EvaluateFlagTyped is EvaluateFlag's typed-attribute counterpart, the
+// entry point a caller supplying a number, boolean or list attribute
+// (via StringAttr/NumberAttr/BoolAttr/ListAttr, or WithTypedAttributes
+// through Client.Evaluate) reaches. Identical evaluation order and
+// fail-safe semantics to EvaluateFlag; see its own doc comment.
+func EvaluateFlagTyped(flag FlagConfig, configVersion int64, subjectKey string, attributes map[string]AttributeValue) EvaluationResult {
 	if !flag.Enabled {
 		return defaultResult(flag, configVersion, ReasonDefaultDisabled)
 	}

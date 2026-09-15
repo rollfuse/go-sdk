@@ -1,0 +1,499 @@
+[
+  {
+    "description": "typed number attribute: ordered comparison compares numerically, not lexically (\"9\" < \"10\" lexically but 9 < 10 numerically — this vector's subject age would fail a lexical >= 10 check)",
+    "flag_key": "senior-discount",
+    "variations": [{"key": "on", "value": true}, {"key": "off", "value": false}],
+    "default_variation_key": "off",
+    "rules": [
+      {"clause": {"op": "gte", "attribute": "age", "type": "number", "value": 9}, "outcome": {"variation_key": "on"}}
+    ],
+    "subject_key": "user-1",
+    "attributes": {"age": {"type": "number", "value": 34}},
+    "expected_variation_key": "on",
+    "expected_reason": "rule_match"
+  },
+  {
+    "description": "typed boolean attribute: equality compares as boolean",
+    "flag_key": "beta-features",
+    "variations": [{"key": "on", "value": true}, {"key": "off", "value": false}],
+    "default_variation_key": "off",
+    "rules": [
+      {"clause": {"op": "eq", "attribute": "beta_opt_in", "type": "boolean", "value": true}, "outcome": {"variation_key": "on"}}
+    ],
+    "subject_key": "user-1",
+    "attributes": {"beta_opt_in": {"type": "boolean", "value": true}},
+    "expected_variation_key": "on",
+    "expected_reason": "rule_match"
+  },
+  {
+    "description": "typed list attribute: membership clause tests whether the list contains the value",
+    "flag_key": "admin-tools",
+    "variations": [{"key": "on", "value": true}, {"key": "off", "value": false}],
+    "default_variation_key": "off",
+    "rules": [
+      {"clause": {"op": "in", "attribute": "roles", "type": "list", "value": ["admin"]}, "outcome": {"variation_key": "on"}}
+    ],
+    "subject_key": "user-1",
+    "attributes": {"roles": {"type": "list", "value": ["billing", "admin"]}},
+    "expected_variation_key": "on",
+    "expected_reason": "rule_match"
+  },
+  {
+    "description": "type mismatch: clause expects a number, subject supplies a string — evaluates false, falls through to default, never coerced (\"34\" is never treated as 34)",
+    "flag_key": "senior-discount",
+    "variations": [{"key": "on", "value": true}, {"key": "off", "value": false}],
+    "default_variation_key": "off",
+    "rules": [
+      {"clause": {"op": "gte", "attribute": "age", "type": "number", "value": 18}, "outcome": {"variation_key": "on"}}
+    ],
+    "subject_key": "user-1",
+    "attributes": {"age": {"type": "string", "value": "34"}},
+    "expected_variation_key": "off",
+    "expected_reason": "default_no_rule_match"
+  },
+  {
+    "description": "equality operator on a string attribute",
+    "flag_key": "region-gate",
+    "variations": [{"key": "on", "value": true}, {"key": "off", "value": false}],
+    "default_variation_key": "off",
+    "rules": [
+      {"clause": {"op": "eq", "attribute": "region", "type": "string", "value": "br-south"}, "outcome": {"variation_key": "on"}}
+    ],
+    "subject_key": "user-1",
+    "attributes": {"region": {"type": "string", "value": "br-south"}},
+    "expected_variation_key": "on",
+    "expected_reason": "rule_match"
+  },
+  {
+    "description": "inequality operator: clause matches when the attribute differs from the literal",
+    "flag_key": "region-gate",
+    "variations": [{"key": "on", "value": true}, {"key": "off", "value": false}],
+    "default_variation_key": "off",
+    "rules": [
+      {"clause": {"op": "neq", "attribute": "region", "type": "string", "value": "br-south"}, "outcome": {"variation_key": "on"}}
+    ],
+    "subject_key": "user-1",
+    "attributes": {"region": {"type": "string", "value": "br-north"}},
+    "expected_variation_key": "on",
+    "expected_reason": "rule_match"
+  },
+  {
+    "description": "ordered comparison: less-than",
+    "flag_key": "starter-limits",
+    "variations": [{"key": "on", "value": true}, {"key": "off", "value": false}],
+    "default_variation_key": "off",
+    "rules": [
+      {"clause": {"op": "lt", "attribute": "seat_count", "type": "number", "value": 10}, "outcome": {"variation_key": "on"}}
+    ],
+    "subject_key": "org-1",
+    "attributes": {"seat_count": {"type": "number", "value": 3}},
+    "expected_variation_key": "on",
+    "expected_reason": "rule_match"
+  },
+  {
+    "description": "ordered comparison: less-than-or-equal boundary, exactly equal MUST match",
+    "flag_key": "starter-limits",
+    "variations": [{"key": "on", "value": true}, {"key": "off", "value": false}],
+    "default_variation_key": "off",
+    "rules": [
+      {"clause": {"op": "lte", "attribute": "seat_count", "type": "number", "value": 10}, "outcome": {"variation_key": "on"}}
+    ],
+    "subject_key": "org-1",
+    "attributes": {"seat_count": {"type": "number", "value": 10}},
+    "expected_variation_key": "on",
+    "expected_reason": "rule_match"
+  },
+  {
+    "description": "ordered comparison: greater-than boundary, exactly equal MUST NOT match",
+    "flag_key": "starter-limits",
+    "variations": [{"key": "on", "value": true}, {"key": "off", "value": false}],
+    "default_variation_key": "off",
+    "rules": [
+      {"clause": {"op": "gt", "attribute": "seat_count", "type": "number", "value": 10}, "outcome": {"variation_key": "on"}}
+    ],
+    "subject_key": "org-1",
+    "attributes": {"seat_count": {"type": "number", "value": 10}},
+    "expected_variation_key": "off",
+    "expected_reason": "default_no_rule_match"
+  },
+  {
+    "description": "membership: value matches one of a set",
+    "flag_key": "plan-gate",
+    "variations": [{"key": "on", "value": true}, {"key": "off", "value": false}],
+    "default_variation_key": "off",
+    "rules": [
+      {"clause": {"op": "in", "attribute": "plan", "type": "string", "value": ["growth", "enterprise"]}, "outcome": {"variation_key": "on"}}
+    ],
+    "subject_key": "org-1",
+    "attributes": {"plan": {"type": "string", "value": "enterprise"}},
+    "expected_variation_key": "on",
+    "expected_reason": "rule_match"
+  },
+  {
+    "description": "prefix operator",
+    "flag_key": "internal-account-gate",
+    "variations": [{"key": "on", "value": true}, {"key": "off", "value": false}],
+    "default_variation_key": "off",
+    "rules": [
+      {"clause": {"op": "prefix", "attribute": "email", "type": "string", "value": "staff-"}, "outcome": {"variation_key": "on"}}
+    ],
+    "subject_key": "user-1",
+    "attributes": {"email": {"type": "string", "value": "staff-jane@rollfuse.com"}},
+    "expected_variation_key": "on",
+    "expected_reason": "rule_match"
+  },
+  {
+    "description": "suffix operator",
+    "flag_key": "internal-account-gate",
+    "variations": [{"key": "on", "value": true}, {"key": "off", "value": false}],
+    "default_variation_key": "off",
+    "rules": [
+      {"clause": {"op": "suffix", "attribute": "email", "type": "string", "value": "@rollfuse.com"}, "outcome": {"variation_key": "on"}}
+    ],
+    "subject_key": "user-1",
+    "attributes": {"email": {"type": "string", "value": "jane@rollfuse.com"}},
+    "expected_variation_key": "on",
+    "expected_reason": "rule_match"
+  },
+  {
+    "description": "substring operator",
+    "flag_key": "sandbox-org-gate",
+    "variations": [{"key": "on", "value": true}, {"key": "off", "value": false}],
+    "default_variation_key": "off",
+    "rules": [
+      {"clause": {"op": "substring", "attribute": "org_name", "type": "string", "value": "Sandbox"}, "outcome": {"variation_key": "on"}}
+    ],
+    "subject_key": "org-1",
+    "attributes": {"org_name": {"type": "string", "value": "Acme Sandbox Team"}},
+    "expected_variation_key": "on",
+    "expected_reason": "rule_match"
+  },
+  {
+    "description": "bounded regex operator: RE2-safe pattern matches",
+    "flag_key": "sku-format-gate",
+    "variations": [{"key": "on", "value": true}, {"key": "off", "value": false}],
+    "default_variation_key": "off",
+    "rules": [
+      {"clause": {"op": "regex", "attribute": "sku", "type": "string", "value": "^SKU-[0-9]{4}$"}, "outcome": {"variation_key": "on"}}
+    ],
+    "subject_key": "order-1",
+    "attributes": {"sku": {"type": "string", "value": "SKU-4821"}},
+    "expected_variation_key": "on",
+    "expected_reason": "rule_match"
+  },
+  {
+    "description": "bounded regex operator: pattern does not match",
+    "flag_key": "sku-format-gate",
+    "variations": [{"key": "on", "value": true}, {"key": "off", "value": false}],
+    "default_variation_key": "off",
+    "rules": [
+      {"clause": {"op": "regex", "attribute": "sku", "type": "string", "value": "^SKU-[0-9]{4}$"}, "outcome": {"variation_key": "on"}}
+    ],
+    "subject_key": "order-1",
+    "attributes": {"sku": {"type": "string", "value": "LEGACY-4821"}},
+    "expected_variation_key": "off",
+    "expected_reason": "default_no_rule_match"
+  },
+  {
+    "description": "semantic version comparison orders by semver rules, not lexically (\"1.9.0\" < \"1.10.0\" semantically, but \"1.10.0\" < \"1.9.0\" lexically)",
+    "flag_key": "requires-new-sdk",
+    "variations": [{"key": "on", "value": true}, {"key": "off", "value": false}],
+    "default_variation_key": "off",
+    "rules": [
+      {"clause": {"op": "semver_gte", "attribute": "client_version", "type": "string", "value": "1.10.0"}, "outcome": {"variation_key": "on"}}
+    ],
+    "subject_key": "client-1",
+    "attributes": {"client_version": {"type": "string", "value": "1.9.0"}},
+    "expected_variation_key": "off",
+    "expected_reason": "default_no_rule_match"
+  },
+  {
+    "description": "semantic version comparison, matching case: 1.10.0 satisfies >= 1.10.0",
+    "flag_key": "requires-new-sdk",
+    "variations": [{"key": "on", "value": true}, {"key": "off", "value": false}],
+    "default_variation_key": "off",
+    "rules": [
+      {"clause": {"op": "semver_gte", "attribute": "client_version", "type": "string", "value": "1.10.0"}, "outcome": {"variation_key": "on"}}
+    ],
+    "subject_key": "client-1",
+    "attributes": {"client_version": {"type": "string", "value": "1.10.0"}},
+    "expected_variation_key": "on",
+    "expected_reason": "rule_match"
+  },
+  {
+    "description": "absent attribute: clause evaluates false rather than erroring",
+    "flag_key": "region-gate",
+    "variations": [{"key": "on", "value": true}, {"key": "off", "value": false}],
+    "default_variation_key": "off",
+    "rules": [
+      {"clause": {"op": "eq", "attribute": "region", "type": "string", "value": "br-south"}, "outcome": {"variation_key": "on"}}
+    ],
+    "subject_key": "user-1",
+    "attributes": {},
+    "expected_variation_key": "off",
+    "expected_reason": "default_no_rule_match"
+  },
+  {
+    "description": "absent attribute with an explicit negated presence test: NOT(present) matches when the attribute truly is absent",
+    "flag_key": "no-region-set-gate",
+    "variations": [{"key": "on", "value": true}, {"key": "off", "value": false}],
+    "default_variation_key": "off",
+    "rules": [
+      {"clause": {"op": "not", "clause": {"op": "present", "attribute": "region"}}, "outcome": {"variation_key": "on"}}
+    ],
+    "subject_key": "user-1",
+    "attributes": {},
+    "expected_variation_key": "on",
+    "expected_reason": "rule_match"
+  },
+  {
+    "description": "OR composition: matches when either clause matches",
+    "flag_key": "eligible-gate",
+    "variations": [{"key": "on", "value": true}, {"key": "off", "value": false}],
+    "default_variation_key": "off",
+    "rules": [
+      {
+        "clause": {"op": "or", "clauses": [
+          {"op": "eq", "attribute": "plan", "type": "string", "value": "enterprise"},
+          {"op": "eq", "attribute": "internal_account", "type": "boolean", "value": true}
+        ]},
+        "outcome": {"variation_key": "on"}
+      }
+    ],
+    "subject_key": "user-1",
+    "attributes": {"plan": {"type": "string", "value": "starter"}, "internal_account": {"type": "boolean", "value": true}},
+    "expected_variation_key": "on",
+    "expected_reason": "rule_match"
+  },
+  {
+    "description": "negated clause: matches when the underlying clause does not",
+    "flag_key": "non-trial-gate",
+    "variations": [{"key": "on", "value": true}, {"key": "off", "value": false}],
+    "default_variation_key": "off",
+    "rules": [
+      {"clause": {"op": "not", "clause": {"op": "eq", "attribute": "plan", "type": "string", "value": "trial"}}, "outcome": {"variation_key": "on"}}
+    ],
+    "subject_key": "user-1",
+    "attributes": {"plan": {"type": "string", "value": "growth"}},
+    "expected_variation_key": "on",
+    "expected_reason": "rule_match"
+  },
+  {
+    "description": "nested groups within the bounded depth (proposal.md's own example sentence: region AND (plan-tier OR internal account))",
+    "flag_key": "the-competitive-sentence-flag",
+    "variations": [{"key": "on", "value": true}, {"key": "off", "value": false}],
+    "default_variation_key": "off",
+    "rules": [
+      {
+        "clause": {"op": "and", "clauses": [
+          {"op": "eq", "attribute": "region", "type": "string", "value": "br-south"},
+          {"op": "or", "clauses": [
+            {"op": "in", "attribute": "plan", "type": "string", "value": ["growth", "enterprise"]},
+            {"op": "eq", "attribute": "internal_account", "type": "boolean", "value": true}
+          ]}
+        ]},
+        "outcome": {"variation_key": "on"}
+      }
+    ],
+    "subject_key": "user-1",
+    "attributes": {"region": {"type": "string", "value": "br-south"}, "plan": {"type": "string", "value": "starter"}, "internal_account": {"type": "boolean", "value": true}},
+    "expected_variation_key": "on",
+    "expected_reason": "rule_match"
+  },
+  {
+    "description": "nested groups at exactly the bound (5 levels), still evaluates",
+    "flag_key": "deeply-nested-flag",
+    "variations": [{"key": "on", "value": true}, {"key": "off", "value": false}],
+    "default_variation_key": "off",
+    "rules": [
+      {
+        "clause": {"op": "and", "clauses": [
+          {"op": "or", "clauses": [
+            {"op": "and", "clauses": [
+              {"op": "or", "clauses": [
+                {"op": "not", "clause": {"op": "eq", "attribute": "excluded", "type": "boolean", "value": true}}
+              ]}
+            ]}
+          ]}
+        ]},
+        "outcome": {"variation_key": "on"}
+      }
+    ],
+    "subject_key": "user-1",
+    "attributes": {"excluded": {"type": "boolean", "value": false}},
+    "expected_variation_key": "on",
+    "expected_reason": "rule_match"
+  },
+  {
+    "description": "individual target: a listed subject receives its named variation, no rule or rollout applies even though a rule would otherwise match differently",
+    "flag_key": "checkout-redesign",
+    "variations": [{"key": "on", "value": true}, {"key": "off", "value": false}],
+    "default_variation_key": "off",
+    "individual_targets": [{"variation_key": "on", "subject_keys": ["vip-1"]}],
+    "rules": [
+      {"clause": {"op": "eq", "attribute": "plan", "type": "string", "value": "enterprise"}, "outcome": {"variation_key": "off"}}
+    ],
+    "subject_key": "vip-1",
+    "attributes": {"plan": {"type": "string", "value": "enterprise"}},
+    "expected_variation_key": "on",
+    "expected_reason": "individual_target"
+  },
+  {
+    "description": "individual target: an unlisted subject falls through to rules as normal",
+    "flag_key": "checkout-redesign",
+    "variations": [{"key": "on", "value": true}, {"key": "off", "value": false}],
+    "default_variation_key": "off",
+    "individual_targets": [{"variation_key": "on", "subject_keys": ["vip-1"]}],
+    "rules": [
+      {"clause": {"op": "eq", "attribute": "plan", "type": "string", "value": "enterprise"}, "outcome": {"variation_key": "on"}}
+    ],
+    "subject_key": "user-2",
+    "attributes": {"plan": {"type": "string", "value": "enterprise"}},
+    "expected_variation_key": "on",
+    "expected_reason": "rule_match"
+  },
+  {
+    "description": "prerequisite satisfied: dependent flag's own targeting applies",
+    "flag_key": "checkout-v2",
+    "variations": [{"key": "on", "value": true}, {"key": "off", "value": false}],
+    "default_variation_key": "off",
+    "prerequisites": [{"flag_key": "checkout-kill-switch", "required_variation_key": "on"}],
+    "rules": [
+      {"clause": null, "outcome": {"variation_key": "on"}}
+    ],
+    "subject_key": "user-1",
+    "attributes": {},
+    "expected_variation_key": "on",
+    "expected_reason": "rule_match",
+    "prerequisite_states": {"checkout-kill-switch": "on"}
+  },
+  {
+    "description": "prerequisite not satisfied: dependent flag serves its off variation, reason identifies the unsatisfied prerequisite",
+    "flag_key": "checkout-v2",
+    "variations": [{"key": "on", "value": true}, {"key": "off", "value": false}],
+    "default_variation_key": "off",
+    "prerequisites": [{"flag_key": "checkout-kill-switch", "required_variation_key": "on"}],
+    "rules": [
+      {"clause": null, "outcome": {"variation_key": "on"}}
+    ],
+    "subject_key": "user-1",
+    "attributes": {},
+    "expected_variation_key": "off",
+    "expected_reason": "prerequisite_unsatisfied",
+    "prerequisite_states": {"checkout-kill-switch": "off"}
+  },
+  {
+    "description": "prerequisite chain: a prerequisite itself has a prerequisite, evaluated in order (2-hop chain, within the bound of 4)",
+    "flag_key": "checkout-v3",
+    "variations": [{"key": "on", "value": true}, {"key": "off", "value": false}],
+    "default_variation_key": "off",
+    "prerequisites": [{"flag_key": "checkout-v2", "required_variation_key": "on"}],
+    "rules": [
+      {"clause": null, "outcome": {"variation_key": "on"}}
+    ],
+    "subject_key": "user-1",
+    "attributes": {},
+    "expected_variation_key": "off",
+    "expected_reason": "prerequisite_unsatisfied",
+    "prerequisite_states": {"checkout-v2": "off", "checkout-kill-switch": "off"}
+  },
+  {
+    "description": "fractional rollout: an allocation below one percent (5 of 10000 bucket positions, i.e. 0.05%) is honored for a subject whose bucket falls inside it",
+    "flag_key": "canary-rollout",
+    "variations": [{"key": "on", "value": true}, {"key": "off", "value": false}],
+    "default_variation_key": "off",
+    "rules": [
+      {"clause": null, "outcome": {"rollout": [
+        {"variation_key": "on", "bucket_positions": 5},
+        {"variation_key": "off", "bucket_positions": 9995}
+      ]}}
+    ],
+    "subject_key": "subject-in-canary-bucket",
+    "subject_bucket_override": 2,
+    "attributes": {},
+    "expected_variation_key": "on",
+    "expected_reason": "rule_match"
+  },
+  {
+    "description": "fractional rollout: precision matches the bucketing space exactly — bucket_positions sums to 10000, the full space, with no remainder",
+    "flag_key": "canary-rollout",
+    "variations": [{"key": "on", "value": true}, {"key": "off", "value": false}],
+    "default_variation_key": "off",
+    "rules": [
+      {"clause": null, "outcome": {"rollout": [
+        {"variation_key": "on", "bucket_positions": 5},
+        {"variation_key": "off", "bucket_positions": 9995}
+      ]}}
+    ],
+    "subject_key": "subject-outside-canary-bucket",
+    "subject_bucket_override": 9999,
+    "attributes": {},
+    "expected_variation_key": "off",
+    "expected_reason": "rule_match"
+  },
+  {
+    "description": "segment membership: a rule clause tests membership of a named segment, resolved using the segment's own clause model",
+    "flag_key": "enterprise-only-feature",
+    "variations": [{"key": "on", "value": true}, {"key": "off", "value": false}],
+    "default_variation_key": "off",
+    "segments": {
+      "enterprise-accounts": {"clause": {"op": "eq", "attribute": "plan", "type": "string", "value": "enterprise"}}
+    },
+    "rules": [
+      {"clause": {"op": "segment", "segment_key": "enterprise-accounts"}, "outcome": {"variation_key": "on"}}
+    ],
+    "subject_key": "user-1",
+    "attributes": {"plan": {"type": "string", "value": "enterprise"}},
+    "expected_variation_key": "on",
+    "expected_reason": "rule_match"
+  },
+  {
+    "description": "segment membership: subject does not belong, clause evaluates false",
+    "flag_key": "enterprise-only-feature",
+    "variations": [{"key": "on", "value": true}, {"key": "off", "value": false}],
+    "default_variation_key": "off",
+    "segments": {
+      "enterprise-accounts": {"clause": {"op": "eq", "attribute": "plan", "type": "string", "value": "enterprise"}}
+    },
+    "rules": [
+      {"clause": {"op": "segment", "segment_key": "enterprise-accounts"}, "outcome": {"variation_key": "on"}}
+    ],
+    "subject_key": "user-1",
+    "attributes": {"plan": {"type": "string", "value": "starter"}},
+    "expected_variation_key": "off",
+    "expected_reason": "default_no_rule_match"
+  },
+  {
+    "description": "segment referencing the full clause model: a segment can itself use composition, negation and operators beyond equality — the same clause tree a rule uses",
+    "flag_key": "high-value-non-trial",
+    "variations": [{"key": "on", "value": true}, {"key": "off", "value": false}],
+    "default_variation_key": "off",
+    "segments": {
+      "high-value-non-trial-accounts": {"clause": {"op": "and", "clauses": [
+        {"op": "gte", "attribute": "seat_count", "type": "number", "value": 50},
+        {"op": "not", "clause": {"op": "eq", "attribute": "plan", "type": "string", "value": "trial"}}
+      ]}}
+    },
+    "rules": [
+      {"clause": {"op": "segment", "segment_key": "high-value-non-trial-accounts"}, "outcome": {"variation_key": "on"}}
+    ],
+    "subject_key": "org-1",
+    "attributes": {"seat_count": {"type": "number", "value": 120}, "plan": {"type": "string", "value": "growth"}},
+    "expected_variation_key": "on",
+    "expected_reason": "rule_match"
+  },
+  {
+    "description": "malformed/unrecognized construct fails safe: a clause using an operator this evaluator does not recognize is skipped as non-matching, evaluation continues to the next rule rather than failing",
+    "flag_key": "resilience-gate",
+    "variations": [{"key": "on", "value": true}, {"key": "off", "value": false}],
+    "default_variation_key": "off",
+    "rules": [
+      {"clause": {"op": "some_future_operator_this_evaluator_predates", "attribute": "whatever", "type": "string", "value": "x"}, "outcome": {"variation_key": "on"}},
+      {"clause": {"op": "eq", "attribute": "plan", "type": "string", "value": "growth"}, "outcome": {"variation_key": "on"}}
+    ],
+    "subject_key": "user-1",
+    "attributes": {"plan": {"type": "string", "value": "growth"}},
+    "expected_variation_key": "on",
+    "expected_reason": "rule_match"
+  }
+]
