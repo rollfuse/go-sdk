@@ -39,7 +39,7 @@ func (v rolloutOutcomeVector) buildFlagConfig() rollfuse.FlagConfig {
 	splits := make([]rollfuse.RolloutSplit, 0, len(v.Rollout))
 
 	for _, s := range v.Rollout {
-		splits = append(splits, rollfuse.RolloutSplit{VariationKey: s.VariationKey, Percentage: s.Percentage})
+		splits = append(splits, rollfuse.RolloutSplit{VariationKey: s.VariationKey, Percentage: float64(s.Percentage)})
 
 		if !seen[s.VariationKey] {
 			seen[s.VariationKey] = true

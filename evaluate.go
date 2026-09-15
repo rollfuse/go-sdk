@@ -9,23 +9,26 @@ type Variation struct {
 }
 
 // RolloutSplit is one entry of a rollout Outcome: the share of matching
-// subjects that should receive VariationKey. The wire still carries a
-// whole percentage (1-100) as of expand-targeting-model task 2.2 — no
-// format-versioning change has landed yet — but the evaluator's own unit
-// of truth is bucket positions (bucketPositions, out of bucketModulus),
-// computed once from Percentage rather than re-derived per accumulation
-// step, matching the platform's own RolloutSplit.BucketPositions. This is
-// a structural fix, not a behavior change: converting a whole percentage
-// to bucket positions is exact.
+// subjects that should receive VariationKey. Percentage is a float64, not
+// int (task 9.2's own fix): the wire has carried a fractional percentage
+// since expand-targeting-model task 8.5, and an int field fails to
+// JSON-decode a fractional value outright — crashing this client's ENTIRE
+// configuration fetch, not just mis-evaluating the one flag using it.
+// bucketPositions converts this split's wire percentage into bucket
+// positions (the evaluator's own unit of truth, matching the platform's
+// RolloutSplit.BucketPositions) via a single multiply-and-round at this
+// one boundary, never re-derived per accumulation step — the same
+// discipline the platform's own RolloutSplit applies, so a fractional
+// split sums exactly rather than accumulating float drift.
 type RolloutSplit struct {
-	VariationKey string `json:"variation_key"`
-	Percentage   int    `json:"percentage"`
+	VariationKey string  `json:"variation_key"`
+	Percentage   float64 `json:"percentage"`
 }
 
 // bucketPositions converts this split's wire percentage into bucket
 // positions, the space Outcome.resolve actually accumulates in.
 func (s RolloutSplit) bucketPositions() uint32 {
-	return uint32(s.Percentage) * percentageScale
+	return uint32(s.Percentage * float64(percentageScale))
 }
 
 // Outcome is what a Rule resolves to when it matches: either exactly one
@@ -156,7 +159,18 @@ type Prerequisite struct {
 // actually implementing whatever new construct the next format version
 // introduces (task 3.5: this client must never evaluate a construct it
 // does not support).
-const clientFormatVersion = 1
+//
+// 2, matching FormatVersion2 (task 9.2's own finding and fix): section
+// 5.8 already implemented ClauseTree composition, IndividualTarget and
+// Prerequisite here, but this constant was left at 1 the whole time —
+// meaning the platform has been marking every composed/individual-
+// target/prerequisite flag non_evaluable for this client regardless,
+// since format-version negotiation happens before evaluation ever runs.
+// Every construct FormatVersion2 covers is genuinely implemented below
+// as of this fix (composition/individual-targets/prerequisites since
+// section 5.8, fractional rollout percentage since this same fix to
+// RolloutSplit.Percentage).
+const clientFormatVersion = 2
 
 // FlagConfig is one FeatureFlag's per-Environment view: whether it is
 // enabled, its default Variation, its ordered Rules, and the full set of

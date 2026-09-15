@@ -32,6 +32,44 @@ func (r targetingRuleVector) isSingleVariationOutcome() bool {
 	return len(r.Outcome.Rollout) == 0 || string(r.Outcome.Rollout) == "null"
 }
 
+type targetingModelRolloutSplitVector struct {
+	VariationKey    string `json:"variation_key"`
+	BucketPositions uint32 `json:"bucket_positions"`
+}
+
+// toDomainOutcome builds the Outcome a rule vector's own "outcome" field
+// describes, used only by TestTargetingModel_RolloutVectors — every
+// other test in this file only ever needs a single-Variation Outcome,
+// since section 5's own scope (isCompositionScope) excludes rollout
+// outcomes entirely.
+func (r targetingRuleVector) toDomainOutcome(t *testing.T) rollfuse.Outcome {
+	t.Helper()
+
+	if r.isSingleVariationOutcome() {
+		return rollfuse.Outcome{VariationKey: r.Outcome.VariationKey}
+	}
+
+	var splits []targetingModelRolloutSplitVector
+	if err := json.Unmarshal(r.Outcome.Rollout, &splits); err != nil {
+		t.Fatalf("decode rollout outcome: %v", err)
+	}
+
+	domainSplits := make([]rollfuse.RolloutSplit, 0, len(splits))
+	for _, s := range splits {
+		// The fixture's own unit is bucket positions (bucketModulus =
+		// 10000); this package's own RolloutSplit still speaks
+		// Percentage on the wire, so convert once here rather than
+		// adding a second, bucket-position-native field this client
+		// doesn't otherwise need.
+		domainSplits = append(domainSplits, rollfuse.RolloutSplit{
+			VariationKey: s.VariationKey,
+			Percentage:   float64(s.BucketPositions) / 100,
+		})
+	}
+
+	return rollfuse.Outcome{Rollout: domainSplits}
+}
+
 // clauseOpOnly decodes only the "op" field, enough to classify a clause
 // as a composition/segment construct without needing the full shape.
 type clauseOpOnly struct {
@@ -389,5 +427,116 @@ func TestTargetingModel_CompositionVectors(t *testing.T) {
 
 	if ran != wantCompositionVectorsPassing {
 		t.Fatalf("ran %d composition/individual-target/prerequisite vectors, want exactly %d (fixture shape changed)", ran, wantCompositionVectorsPassing)
+	}
+}
+
+// isRolloutScope reports whether this vector is a fractional-rollout
+// vector (task 2/8.5's own construct) that neither
+// TestTargetingModel_SingleLeafClauseVectors nor
+// TestTargetingModel_CompositionVectors covers, since both explicitly
+// exclude a rollout outcome. Unlike apps/api's own equivalent
+// isRolloutOrSegmentScope, this deliberately does NOT include the
+// fixture's 3 segment-membership vectors: this package has no
+// ClauseTreeSegment op at all (reusable-segments' own "Segment
+// Membership Is Resolved Consistently For Every Client" requirement is
+// met structurally — the platform never ships an unresolved segment
+// reference to any client, so there is nothing for this client to
+// resolve, see expand-targeting-model task 7.7's own finding), so those
+// 3 vectors are genuinely not this client's scope to run, not a gap.
+func (v targetingModelVector) isRolloutScope() bool {
+	if presentAndNonEmpty(v.Segments) {
+		return false
+	}
+
+	for _, rule := range v.Rules {
+		if !rule.isSingleVariationOutcome() {
+			return true
+		}
+	}
+
+	return false
+}
+
+// wantRolloutVectorsPassing is exactly the fixture's 2 fractional-rollout
+// vectors (task 9.2's own finding: no test in this repo ever ran them).
+const wantRolloutVectorsPassing = 2
+
+// TestTargetingModel_RolloutVectors is task 9.2's own finding and fix:
+// closes the one real gap isSingleLeafScope/isCompositionScope's own
+// partition left uncovered for this client (the fixture's 3 segment
+// vectors are genuinely out of scope, see isRolloutScope's own comment).
+// Investigating why this was never run surfaced two independent, more
+// serious bugs, both fixed alongside this test: (1) RolloutSplit.Percentage
+// was a plain int, which fails to JSON-decode a fractional wire value
+// outright — this client's ENTIRE configuration fetch would crash on any
+// flag using a sub-1% rollout, not just mis-evaluate it; (2)
+// clientFormatVersion was still 1 despite section 5.8 already
+// implementing every FormatVersion2 construct (ClauseTree composition,
+// IndividualTarget, Prerequisite) — meaning the platform has been
+// marking every one of those flags non_evaluable for this client
+// regardless, since version negotiation happens before evaluation ever
+// runs. Manually verified load-bearing: reverting Percentage to int
+// makes this file fail to even compile (a stronger signal than a red
+// test); reverting bucketPositions() to the old
+// "uint32(s.Percentage) * percentageScale" (int-typed) integer
+// multiplication after changing Percentage back to float64 turned this
+// test red (truncated 0.05% to 0%); both restored/kept as the real fix
+// before committing.
+func TestTargetingModel_RolloutVectors(t *testing.T) {
+	data, err := os.ReadFile(targetingModelVectorsPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", targetingModelVectorsPath, err)
+	}
+
+	var vectors []targetingModelVector
+	if err := json.Unmarshal(data, &vectors); err != nil {
+		t.Fatalf("unmarshal %s: %v", targetingModelVectorsPath, err)
+	}
+
+	ran := 0
+
+	for _, vector := range vectors {
+		if !vector.isRolloutScope() {
+			continue
+		}
+
+		ran++
+		vector := vector
+
+		t.Run(vector.Description, func(t *testing.T) {
+			variations := make([]rollfuse.Variation, 0, len(vector.Variations))
+			for _, variation := range vector.Variations {
+				variations = append(variations, rollfuse.Variation{Key: variation.Key, Value: json.RawMessage(`null`)})
+			}
+
+			rules := make([]rollfuse.Rule, 0, len(vector.Rules))
+			for _, rule := range vector.Rules {
+				rules = append(rules, rollfuse.Rule{Outcome: rule.toDomainOutcome(t)})
+			}
+
+			flag := rollfuse.FlagConfig{
+				FlagKey:          vector.FlagKey,
+				Enabled:          true,
+				DefaultVariation: vector.DefaultVariationKey,
+				Rules:            rules,
+				Variations:       variations,
+			}
+
+			attributes := vector.buildAttributes(t)
+
+			result := rollfuse.EvaluateFlagTyped(nil, flag, 1, vector.SubjectKey, attributes)
+
+			if result.VariationKey != vector.ExpectedVariationKey {
+				t.Errorf("variation key = %q, want %q", result.VariationKey, vector.ExpectedVariationKey)
+			}
+
+			if string(result.Reason) != vector.ExpectedReason {
+				t.Errorf("reason = %q, want %q", result.Reason, vector.ExpectedReason)
+			}
+		})
+	}
+
+	if ran != wantRolloutVectorsPassing {
+		t.Fatalf("ran %d rollout vectors, want exactly %d (fixture shape changed)", ran, wantRolloutVectorsPassing)
 	}
 }
