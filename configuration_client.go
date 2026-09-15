@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -313,6 +314,13 @@ func (c *configurationClient) attemptFetch(parentCtx context.Context) bool {
 	}
 
 	req.Header.Set("Authorization", "Bearer "+c.credential)
+
+	// Declares this client's own configuration format capability
+	// (expand-targeting-model task 3.1) so the platform can mark any flag
+	// using a construct newer than this client understands as
+	// non-evaluable, rather than serving a representation this client
+	// would silently mis-evaluate. See evaluate.go's clientFormatVersion.
+	req.Header.Set("X-Rollfuse-Client-Format-Version", strconv.Itoa(clientFormatVersion))
 
 	// Presents the last-seen validator (task 9.1): the platform
 	// revalidates against it and responds 304 with no body if the

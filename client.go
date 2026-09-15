@@ -325,6 +325,14 @@ func (c *Client) Evaluate(subjectKey, flagKey string, opts ...EvaluateOption) (E
 		return EvaluationResult{}, ErrFlagNotFound
 	}
 
+	if flag.NonEvaluable {
+		if o.hasFallback {
+			return fallbackResult(flagKey, o.fallback, cfg.Version)
+		}
+
+		return EvaluationResult{}, ErrFlagNotEvaluable
+	}
+
 	result := EvaluateFlag(*flag, cfg.Version, subjectKey, o.attributes)
 	c.trackExposure(subjectKey, result)
 
@@ -353,6 +361,15 @@ func (c *Client) EvaluateAll(subjectKey string, opts ...EvaluateOption) ([]Evalu
 	results := make([]EvaluationResult, 0, len(cfg.Flags))
 
 	for _, flag := range cfg.Flags {
+		if flag.NonEvaluable {
+			// No legitimate default is known for a flag definition this
+			// client was never shown — EvaluateAll has no per-flag
+			// fallback concept (unlike Evaluate), so the only safe
+			// choice is to omit it entirely rather than guess or
+			// silently mis-evaluate it, per task 3.5.
+			continue
+		}
+
 		result := EvaluateFlag(flag, cfg.Version, subjectKey, o.attributes)
 		c.trackExposure(subjectKey, result)
 		results = append(results, result)
