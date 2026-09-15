@@ -359,7 +359,7 @@ func (c *Client) Evaluate(subjectKey, flagKey string, opts ...EvaluateOption) (E
 		return EvaluationResult{}, ErrFlagNotEvaluable
 	}
 
-	result := EvaluateFlagTyped(*flag, cfg.Version, subjectKey, o.resolvedAttributes())
+	result := EvaluateFlagTyped(cfg.Flags, *flag, cfg.Version, subjectKey, o.resolvedAttributes())
 	c.trackExposure(subjectKey, result)
 
 	return result, nil
@@ -396,7 +396,7 @@ func (c *Client) EvaluateAll(subjectKey string, opts ...EvaluateOption) ([]Evalu
 			continue
 		}
 
-		result := EvaluateFlagTyped(flag, cfg.Version, subjectKey, o.resolvedAttributes())
+		result := EvaluateFlagTyped(cfg.Flags, flag, cfg.Version, subjectKey, o.resolvedAttributes())
 		c.trackExposure(subjectKey, result)
 		results = append(results, result)
 	}

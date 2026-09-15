@@ -73,45 +73,80 @@ type Condition struct {
 }
 
 // Rule is one entry of a FlagConfig's ordered targeting list, evaluated
-// in order; the first Rule whose clauses match (or that is
-// unconditional) wins. Every one of Clauses MUST match (logical AND) —
-// OR composition, negation and nesting (section 5) are not represented
-// by this flat list yet.
+// in order; the first Rule whose condition matches (or that is
+// unconditional) wins.
 //
-// A Rule carries EITHER Clauses (the current wire shape) OR Conditions
-// (the shape every Rule had before expand-targeting-model section 4),
-// never both in practice; matches prefers Clauses when present so a
-// config already migrated to the typed model is never re-interpreted
-// through the older, string-only path.
+// A Rule carries Condition (the current wire shape, a full ClauseTree
+// supporting AND/OR/negation/nesting per expand-targeting-model section
+// 5), OR Clauses (a flat AND-only list, section 4's shape) OR Conditions
+// (the shape every Rule had before section 4), never more than one in
+// practice; matches prefers Condition, then Clauses, then Conditions, so
+// a config already migrated to a richer model is never re-interpreted
+// through an older, less expressive path.
 type Rule struct {
+	Condition  *ClauseTree `json:"condition,omitempty"`
 	Clauses    []Clause    `json:"clauses,omitempty"`
 	Conditions []Condition `json:"conditions,omitempty"`
 	Outcome    Outcome     `json:"outcome"`
 }
 
 // matches reports whether this Rule applies to the given subject
-// attributes. A Rule with no Clauses and no Conditions is an
+// attributes. A Rule with no Condition, Clauses and no Conditions is an
 // unconditional catch-all and always matches.
-func (r Rule) matches(attributes map[string]AttributeValue) bool {
+func (r Rule) matches(attributes map[string]AttributeValue) (bool, string) {
+	if r.Condition != nil {
+		return r.Condition.Match(attributes, 0)
+	}
+
 	if len(r.Clauses) > 0 {
 		for _, clause := range r.Clauses {
-			matched, _ := clause.Match(attributes)
+			matched, diagnostic := clause.Match(attributes)
 			if !matched {
-				return false
+				return false, diagnostic
 			}
 		}
 
-		return true
+		return true, ""
 	}
 
 	for _, condition := range r.Conditions {
 		value, ok := attributes[condition.Attribute]
 		if !ok || value.Type != AttributeTypeString || value.String != condition.Value {
-			return false
+			return false, ""
 		}
 	}
 
-	return true
+	return true, ""
+}
+
+// IndividualTarget serves VariationKey to every subject key listed in
+// SubjectKeys, evaluated before any Rule or rollout —
+// environment-flag-targeting's "A Flag May Target Named Individuals"
+// requirement.
+type IndividualTarget struct {
+	VariationKey string   `json:"variation_key"`
+	SubjectKeys  []string `json:"subject_keys"`
+}
+
+func (t IndividualTarget) includes(subjectKey string) bool {
+	for _, key := range t.SubjectKeys {
+		if key == subjectKey {
+			return true
+		}
+	}
+
+	return false
+}
+
+// Prerequisite is a dependency on another FlagConfig in the same
+// Configuration serving RequiredVariationKey for the same subject before
+// this flag's own targeting applies — environment-flag-targeting's "A
+// Flag May Depend On A Prerequisite Flag" requirement. FlagKey is
+// resolved against the same []FlagConfig slice Evaluate receives, not a
+// separate lookup (this package makes no network calls from evaluation).
+type Prerequisite struct {
+	FlagKey              string `json:"flag_key"`
+	RequiredVariationKey string `json:"required_variation_key"`
 }
 
 // clientFormatVersion is the highest configuration format version this
@@ -133,12 +168,14 @@ const clientFormatVersion = 1
 // fallback for such a flag rather than treating an empty Rules/Variations
 // as "no targeting configured," which would silently mis-evaluate it.
 type FlagConfig struct {
-	FlagKey          string      `json:"flag_key"`
-	Enabled          bool        `json:"enabled"`
-	DefaultVariation string      `json:"default_variation"`
-	Variations       []Variation `json:"variations"`
-	Rules            []Rule      `json:"rules"`
-	NonEvaluable     bool        `json:"non_evaluable"`
+	FlagKey           string             `json:"flag_key"`
+	Enabled           bool               `json:"enabled"`
+	DefaultVariation  string             `json:"default_variation"`
+	Variations        []Variation        `json:"variations"`
+	Rules             []Rule             `json:"rules"`
+	NonEvaluable      bool               `json:"non_evaluable"`
+	IndividualTargets []IndividualTarget `json:"individual_targets,omitempty"`
+	Prerequisites     []Prerequisite     `json:"prerequisites,omitempty"`
 }
 
 func (f FlagConfig) hasVariation(key string) bool {
@@ -192,6 +229,14 @@ const (
 	// ReasonDefaultFallback is the last-resort safety net: a Rule matched
 	// but its Outcome could not be resolved to a known Variation.
 	ReasonDefaultFallback EvaluationReason = "default_fallback"
+	// ReasonIndividualTarget means the subject key matched an
+	// IndividualTarget listing — expand-targeting-model section 5.
+	ReasonIndividualTarget EvaluationReason = "individual_target"
+	// ReasonPrerequisiteUnsatisfied means a Prerequisite FlagConfig did
+	// not resolve to its RequiredVariationKey for this subject, so the
+	// default Variation was served without evaluating this flag's own
+	// targets, Rules or rollout — expand-targeting-model section 5.
+	ReasonPrerequisiteUnsatisfied EvaluationReason = "prerequisite_unsatisfied"
 )
 
 // EvaluationResult is the outcome of evaluating one FeatureFlag for one
@@ -229,8 +274,14 @@ type EvaluationResult struct {
 // membership/string-operator clause expecting a string — exactly the
 // equality-only behavior this function always had. A caller that needs
 // a typed (number/boolean/list) attribute must use EvaluateFlagTyped.
-func EvaluateFlag(flag FlagConfig, configVersion int64, subjectKey string, attributes map[string]string) EvaluationResult {
-	return EvaluateFlagTyped(flag, configVersion, subjectKey, stringAttributesToTyped(attributes))
+//
+// flags is the full Configuration.Flags slice flag itself came from,
+// needed to resolve any Prerequisite flag.FlagKey references (section 5)
+// with no extra I/O — pass nil if flag has no Prerequisites (a
+// Prerequisite that cannot be resolved fails safe as unsatisfied, never
+// panics on a nil/short slice).
+func EvaluateFlag(flags []FlagConfig, flag FlagConfig, configVersion int64, subjectKey string, attributes map[string]string) EvaluationResult {
+	return EvaluateFlagTyped(flags, flag, configVersion, subjectKey, stringAttributesToTyped(attributes))
 }
 
 func stringAttributesToTyped(attributes map[string]string) map[string]AttributeValue {
@@ -247,13 +298,77 @@ func stringAttributesToTyped(attributes map[string]string) map[string]AttributeV
 // (via StringAttr/NumberAttr/BoolAttr/ListAttr, or WithTypedAttributes
 // through Client.Evaluate) reaches. Identical evaluation order and
 // fail-safe semantics to EvaluateFlag; see its own doc comment.
-func EvaluateFlagTyped(flag FlagConfig, configVersion int64, subjectKey string, attributes map[string]AttributeValue) EvaluationResult {
+func EvaluateFlagTyped(flags []FlagConfig, flag FlagConfig, configVersion int64, subjectKey string, attributes map[string]AttributeValue) EvaluationResult {
+	return evaluateFlag(flags, flag, configVersion, subjectKey, attributes, 0)
+}
+
+// maxPrerequisiteChainDepth is task 1.2's bound decision (testdata/
+// README.md: "prerequisite chain length 4"), enforced here as
+// evaluation's own defensive fail-safe against a chain deeper than
+// authoring should ever have allowed to be persisted — data that somehow
+// bypassed the platform's authoring-time cycle/length check degrades to
+// "unsatisfied" rather than recursing unboundedly, per
+// feature-evaluation's "A Malformed Or Unsupported Construct Fails Safe"
+// requirement.
+const maxPrerequisiteChainDepth = 4
+
+func lookupFlagConfig(flags []FlagConfig, flagKey string) (FlagConfig, bool) {
+	for _, f := range flags {
+		if f.FlagKey == flagKey {
+			return f, true
+		}
+	}
+
+	return FlagConfig{}, false
+}
+
+// evaluateFlag is EvaluateFlagTyped's recursive core: depth counts how
+// many Prerequisite hops resolving flag itself required, so a chain
+// longer than maxPrerequisiteChainDepth fails safe instead of recursing
+// without bound.
+func evaluateFlag(flags []FlagConfig, flag FlagConfig, configVersion int64, subjectKey string, attributes map[string]AttributeValue, depth int) EvaluationResult {
 	if !flag.Enabled {
 		return defaultResult(flag, configVersion, ReasonDefaultDisabled)
 	}
 
+	if depth > maxPrerequisiteChainDepth {
+		return defaultResult(flag, configVersion, ReasonPrerequisiteUnsatisfied)
+	}
+
+	for _, prerequisite := range flag.Prerequisites {
+		prerequisiteFlag, found := lookupFlagConfig(flags, prerequisite.FlagKey)
+		if !found {
+			return defaultResult(flag, configVersion, ReasonPrerequisiteUnsatisfied)
+		}
+
+		result := evaluateFlag(flags, prerequisiteFlag, configVersion, subjectKey, attributes, depth+1)
+		if result.VariationKey != prerequisite.RequiredVariationKey {
+			return defaultResult(flag, configVersion, ReasonPrerequisiteUnsatisfied)
+		}
+	}
+
+	for _, target := range flag.IndividualTargets {
+		if !target.includes(subjectKey) {
+			continue
+		}
+
+		if !flag.hasVariation(target.VariationKey) {
+			return defaultResult(flag, configVersion, ReasonDefaultFallback)
+		}
+
+		return EvaluationResult{
+			FlagKey:       flag.FlagKey,
+			VariationKey:  target.VariationKey,
+			Value:         flag.variationValue(target.VariationKey),
+			Reason:        ReasonIndividualTarget,
+			ConfigVersion: configVersion,
+			TrackExposure: true,
+		}
+	}
+
 	for _, rule := range flag.Rules {
-		if !rule.matches(attributes) {
+		matched, _ := rule.matches(attributes)
+		if !matched {
 			continue
 		}
 

@@ -33,7 +33,7 @@ func TestEvaluateFlag_Disabled(t *testing.T) {
 		f.Rules = []rollfuse.Rule{{Outcome: rollfuse.Outcome{VariationKey: "on"}}}
 	})
 
-	result := rollfuse.EvaluateFlag(flag, 1, "user_1", nil)
+	result := rollfuse.EvaluateFlag(nil, flag, 1, "user_1", nil)
 
 	if result.Reason != rollfuse.ReasonDefaultDisabled {
 		t.Fatalf("expected ReasonDefaultDisabled, got %v", result.Reason)
@@ -54,7 +54,7 @@ func TestEvaluateFlag_NoRuleMatches(t *testing.T) {
 		}
 	})
 
-	result := rollfuse.EvaluateFlag(flag, 1, "user_1", map[string]string{"plan": "starter"})
+	result := rollfuse.EvaluateFlag(nil, flag, 1, "user_1", map[string]string{"plan": "starter"})
 
 	if result.Reason != rollfuse.ReasonDefaultNoRuleMatch {
 		t.Fatalf("expected ReasonDefaultNoRuleMatch, got %v", result.Reason)
@@ -71,7 +71,7 @@ func TestEvaluateFlag_MissingAttributeNeverMatches(t *testing.T) {
 		}
 	})
 
-	result := rollfuse.EvaluateFlag(flag, 1, "user_1", nil)
+	result := rollfuse.EvaluateFlag(nil, flag, 1, "user_1", nil)
 
 	if result.Reason != rollfuse.ReasonDefaultNoRuleMatch {
 		t.Fatalf("expected ReasonDefaultNoRuleMatch, got %v", result.Reason)
@@ -88,7 +88,7 @@ func TestEvaluateFlag_RuleMatchTracksExposure(t *testing.T) {
 		}
 	})
 
-	result := rollfuse.EvaluateFlag(flag, 3, "user_1", map[string]string{"plan": "enterprise"})
+	result := rollfuse.EvaluateFlag(nil, flag, 3, "user_1", map[string]string{"plan": "enterprise"})
 
 	if result.Reason != rollfuse.ReasonRuleMatch || result.VariationKey != "on" || !result.TrackExposure {
 		t.Fatalf("unexpected result: %+v", result)
@@ -110,7 +110,7 @@ func TestEvaluateFlag_FirstMatchWins(t *testing.T) {
 		}
 	})
 
-	result := rollfuse.EvaluateFlag(flag, 1, "user_1", map[string]string{"plan": "enterprise"})
+	result := rollfuse.EvaluateFlag(nil, flag, 1, "user_1", map[string]string{"plan": "enterprise"})
 
 	if result.VariationKey != "on" {
 		t.Fatalf("expected the earlier rule to win, got variation %q", result.VariationKey)
@@ -122,7 +122,7 @@ func TestEvaluateFlag_UnresolvableOutcomeFallsBack(t *testing.T) {
 		f.Rules = []rollfuse.Rule{{Outcome: rollfuse.Outcome{VariationKey: "does-not-exist"}}}
 	})
 
-	result := rollfuse.EvaluateFlag(flag, 1, "user_1", nil)
+	result := rollfuse.EvaluateFlag(nil, flag, 1, "user_1", nil)
 
 	if result.Reason != rollfuse.ReasonDefaultFallback || result.VariationKey != "off" || result.TrackExposure {
 		t.Fatalf("unexpected result: %+v", result)
@@ -186,7 +186,7 @@ func TestEvaluateFlag_NeverPanicsOnUnexpectedShape(t *testing.T) {
 				}
 			}()
 
-			result := rollfuse.EvaluateFlag(flag, 1, "user_1", nil)
+			result := rollfuse.EvaluateFlag(nil, flag, 1, "user_1", nil)
 
 			if result.Reason == "" {
 				t.Fatalf("expected a non-empty reason, got %+v", result)
@@ -209,10 +209,10 @@ func TestEvaluateFlag_Deterministic(t *testing.T) {
 		}
 	})
 
-	first := rollfuse.EvaluateFlag(flag, 1, "user_123", nil)
+	first := rollfuse.EvaluateFlag(nil, flag, 1, "user_123", nil)
 
 	for i := 0; i < 20; i++ {
-		got := rollfuse.EvaluateFlag(flag, 1, "user_123", nil)
+		got := rollfuse.EvaluateFlag(nil, flag, 1, "user_123", nil)
 		if got.VariationKey != first.VariationKey || got.Reason != first.Reason {
 			t.Fatalf("expected deterministic result, got %+v vs %+v", got, first)
 		}
@@ -247,7 +247,7 @@ func TestEvaluateFlag_RolloutMatchesGoldenVectors(t *testing.T) {
 			expected = "on"
 		}
 
-		result := rollfuse.EvaluateFlag(flag, 1, v.SubjectKey, nil)
+		result := rollfuse.EvaluateFlag(nil, flag, 1, v.SubjectKey, nil)
 
 		if result.VariationKey != expected {
 			t.Fatalf("subject %q: expected variation %q (bucket %d), got %q", v.SubjectKey, expected, bucket, result.VariationKey)

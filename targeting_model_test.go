@@ -9,15 +9,16 @@ import (
 )
 
 // targetingModelVectorsPath is expand-targeting-model task 1.1's fixture,
-// shared verbatim with apps/api/internal/evaluation/domain/testdata (see
-// that package's own targeting_model_test.go for the scoping rationale).
-// Task 4.7 only implements single-leaf clauses; composition, individual
-// targets, prerequisites and segment-membership clauses are sections
-// 5-7's job. This test filters to the same set apps/api's own test
-// proved passing — 19 vectors — and fails loudly if that count drifts.
+// shared verbatim with apps/api/internal/evaluation/domain/testdata.
 const targetingModelVectorsPath = "testdata/targeting-model-vectors.json"
 
 const wantSingleLeafVectorsPassing = 19
+
+// wantCompositionVectorsPassing is exactly how many of
+// targeting-model-vectors.json's vectors are section 5's own scope
+// (composition/negation/nesting, individual targets, prerequisites) —
+// matches apps/api's own TestTargetingModel_CompositionVectors count.
+const wantCompositionVectorsPassing = 10
 
 type targetingRuleVector struct {
 	Clause  json.RawMessage `json:"clause"`
@@ -32,8 +33,7 @@ func (r targetingRuleVector) isSingleVariationOutcome() bool {
 }
 
 // clauseOpOnly decodes only the "op" field, enough to classify a clause
-// as a composition/segment construct (out of section 4's scope) without
-// needing the full Clause shape.
+// as a composition/segment construct without needing the full shape.
 type clauseOpOnly struct {
 	Op string `json:"op"`
 }
@@ -61,6 +61,16 @@ type targetingAttributeVector struct {
 	Value json.RawMessage `json:"value"`
 }
 
+type individualTargetVector struct {
+	VariationKey string   `json:"variation_key"`
+	SubjectKeys  []string `json:"subject_keys"`
+}
+
+type prerequisiteVector struct {
+	FlagKey              string `json:"flag_key"`
+	RequiredVariationKey string `json:"required_variation_key"`
+}
+
 type targetingModelVector struct {
 	Description string `json:"description"`
 	FlagKey     string `json:"flag_key"`
@@ -73,9 +83,14 @@ type targetingModelVector struct {
 	Attributes           map[string]targetingAttributeVector `json:"attributes"`
 	ExpectedVariationKey string                              `json:"expected_variation_key"`
 	ExpectedReason       string                              `json:"expected_reason"`
-	IndividualTargets    json.RawMessage                     `json:"individual_targets"`
-	Prerequisites        json.RawMessage                     `json:"prerequisites"`
-	Segments             json.RawMessage                     `json:"segments"`
+	IndividualTargets    []individualTargetVector            `json:"individual_targets"`
+	Prerequisites        []prerequisiteVector                `json:"prerequisites"`
+	// PrerequisiteStates supplies, for each prerequisite flag key this
+	// vector's own Prerequisites reference, the fixed variation key that
+	// flag should resolve to — see buildPrerequisiteFlags' own doc
+	// comment. Mirrors apps/api's own test fixture-consumption shape.
+	PrerequisiteStates map[string]string `json:"prerequisite_states"`
+	Segments           json.RawMessage   `json:"segments"`
 }
 
 func presentAndNonEmpty(raw json.RawMessage) bool {
@@ -83,7 +98,7 @@ func presentAndNonEmpty(raw json.RawMessage) bool {
 }
 
 func (v targetingModelVector) isSingleLeafScope() bool {
-	if presentAndNonEmpty(v.IndividualTargets) || presentAndNonEmpty(v.Prerequisites) || presentAndNonEmpty(v.Segments) {
+	if len(v.IndividualTargets) > 0 || len(v.Prerequisites) > 0 || presentAndNonEmpty(v.Segments) {
 		return false
 	}
 
@@ -94,6 +109,35 @@ func (v targetingModelVector) isSingleLeafScope() bool {
 	}
 
 	return true
+}
+
+// isCompositionScope reports whether this vector is section 5's own
+// scope: composition (AND/OR/negation/nesting), individual targets or
+// prerequisites, excluding a segment reference (section 7, not
+// implemented) or a rollout outcome. Partitions the fixture against
+// isSingleLeafScope so the two tests never double-cover a vector.
+func (v targetingModelVector) isCompositionScope() bool {
+	if presentAndNonEmpty(v.Segments) {
+		return false
+	}
+
+	for _, rule := range v.Rules {
+		if !rule.isSingleVariationOutcome() {
+			return false
+		}
+	}
+
+	if len(v.IndividualTargets) > 0 || len(v.Prerequisites) > 0 {
+		return true
+	}
+
+	for _, rule := range v.Rules {
+		if !rule.isSingleLeaf() {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (v targetingModelVector) buildFlagConfig(t *testing.T) rollfuse.FlagConfig {
@@ -131,6 +175,88 @@ func (v targetingModelVector) buildFlagConfig(t *testing.T) rollfuse.FlagConfig 
 		Rules:            rules,
 		Variations:       variations,
 	}
+}
+
+// buildFullFlagConfig is buildFlagConfig's section-5-scope counterpart:
+// it decodes the full ClauseTree (composition, negation, nesting)
+// directly via ClauseTree's own UnmarshalJSON, and attaches
+// IndividualTargets/Prerequisites.
+func (v targetingModelVector) buildFullFlagConfig(t *testing.T) rollfuse.FlagConfig {
+	t.Helper()
+
+	variations := make([]rollfuse.Variation, 0, len(v.Variations))
+	for _, variation := range v.Variations {
+		variations = append(variations, rollfuse.Variation{Key: variation.Key, Value: json.RawMessage(`null`)})
+	}
+
+	rules := make([]rollfuse.Rule, 0, len(v.Rules))
+
+	for _, rule := range v.Rules {
+		var condition *rollfuse.ClauseTree
+
+		if len(rule.Clause) > 0 && string(rule.Clause) != "null" {
+			var tree rollfuse.ClauseTree
+			if err := json.Unmarshal(rule.Clause, &tree); err != nil {
+				t.Fatalf("decode clause tree: %v", err)
+			}
+
+			condition = &tree
+		}
+
+		rules = append(rules, rollfuse.Rule{
+			Condition: condition,
+			Outcome:   rollfuse.Outcome{VariationKey: rule.Outcome.VariationKey},
+		})
+	}
+
+	individualTargets := make([]rollfuse.IndividualTarget, 0, len(v.IndividualTargets))
+	for _, target := range v.IndividualTargets {
+		individualTargets = append(individualTargets, rollfuse.IndividualTarget{
+			VariationKey: target.VariationKey,
+			SubjectKeys:  target.SubjectKeys,
+		})
+	}
+
+	prerequisites := make([]rollfuse.Prerequisite, 0, len(v.Prerequisites))
+	for _, p := range v.Prerequisites {
+		prerequisites = append(prerequisites, rollfuse.Prerequisite{
+			FlagKey:              p.FlagKey,
+			RequiredVariationKey: p.RequiredVariationKey,
+		})
+	}
+
+	return rollfuse.FlagConfig{
+		FlagKey:           v.FlagKey,
+		Enabled:           true,
+		DefaultVariation:  v.DefaultVariationKey,
+		Rules:             rules,
+		Variations:        variations,
+		IndividualTargets: individualTargets,
+		Prerequisites:     prerequisites,
+	}
+}
+
+// buildPrerequisiteFlags synthesizes a minimal FlagConfig for every entry
+// in v.PrerequisiteStates: an always-enabled, unconditional flag whose
+// single Variation and Rule resolve deterministically to the stated
+// value, regardless of subject or attributes — mirrors apps/api's own
+// test helper of the same name and purpose.
+func (v targetingModelVector) buildPrerequisiteFlags(t *testing.T) []rollfuse.FlagConfig {
+	t.Helper()
+
+	flags := make([]rollfuse.FlagConfig, 0, len(v.PrerequisiteStates))
+
+	for flagKey, variationKey := range v.PrerequisiteStates {
+		flags = append(flags, rollfuse.FlagConfig{
+			FlagKey:          flagKey,
+			Enabled:          true,
+			DefaultVariation: variationKey,
+			Variations:       []rollfuse.Variation{{Key: variationKey, Value: json.RawMessage(`null`)}},
+			Rules:            []rollfuse.Rule{{Outcome: rollfuse.Outcome{VariationKey: variationKey}}},
+		})
+	}
+
+	return flags
 }
 
 func (v targetingModelVector) buildAttributes(t *testing.T) map[string]rollfuse.AttributeValue {
@@ -197,7 +323,7 @@ func TestTargetingModel_SingleLeafClauseVectors(t *testing.T) {
 			flag := vector.buildFlagConfig(t)
 			attributes := vector.buildAttributes(t)
 
-			result := rollfuse.EvaluateFlagTyped(flag, 1, vector.SubjectKey, attributes)
+			result := rollfuse.EvaluateFlagTyped(nil, flag, 1, vector.SubjectKey, attributes)
 
 			if result.VariationKey != vector.ExpectedVariationKey {
 				t.Errorf("variation key = %q, want %q", result.VariationKey, vector.ExpectedVariationKey)
@@ -211,5 +337,57 @@ func TestTargetingModel_SingleLeafClauseVectors(t *testing.T) {
 
 	if ran != wantSingleLeafVectorsPassing {
 		t.Fatalf("ran %d single-leaf-clause vectors, want exactly %d (fixture shape changed)", ran, wantSingleLeafVectorsPassing)
+	}
+}
+
+// TestTargetingModel_CompositionVectors runs every composition/
+// individual-target/prerequisite vector through EvaluateFlagTyped,
+// section 5's own scope. Manually verified load-bearing: temporarily
+// changing ClauseTree.Match's "or" case to require every child to match
+// (turning it into "and") turned the OR-composition vector red;
+// reordering evaluateFlag to check rules before individual targets
+// turned the "individual target overrides a differently-matching rule"
+// vector red; removing the prerequisite-resolution loop entirely turned
+// both prerequisite vectors red; all reverted before committing.
+func TestTargetingModel_CompositionVectors(t *testing.T) {
+	data, err := os.ReadFile(targetingModelVectorsPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", targetingModelVectorsPath, err)
+	}
+
+	var vectors []targetingModelVector
+	if err := json.Unmarshal(data, &vectors); err != nil {
+		t.Fatalf("unmarshal %s: %v", targetingModelVectorsPath, err)
+	}
+
+	ran := 0
+
+	for _, vector := range vectors {
+		if !vector.isCompositionScope() {
+			continue
+		}
+
+		ran++
+		vector := vector
+
+		t.Run(vector.Description, func(t *testing.T) {
+			flag := vector.buildFullFlagConfig(t)
+			attributes := vector.buildAttributes(t)
+			flags := append(vector.buildPrerequisiteFlags(t), flag)
+
+			result := rollfuse.EvaluateFlagTyped(flags, flag, 1, vector.SubjectKey, attributes)
+
+			if result.VariationKey != vector.ExpectedVariationKey {
+				t.Errorf("variation key = %q, want %q", result.VariationKey, vector.ExpectedVariationKey)
+			}
+
+			if string(result.Reason) != vector.ExpectedReason {
+				t.Errorf("reason = %q, want %q", result.Reason, vector.ExpectedReason)
+			}
+		})
+	}
+
+	if ran != wantCompositionVectorsPassing {
+		t.Fatalf("ran %d composition/individual-target/prerequisite vectors, want exactly %d (fixture shape changed)", ran, wantCompositionVectorsPassing)
 	}
 }
