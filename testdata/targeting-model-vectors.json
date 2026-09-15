@@ -408,8 +408,8 @@
         {"variation_key": "off", "bucket_positions": 9995}
       ]}}
     ],
-    "subject_key": "subject-in-canary-bucket",
-    "subject_bucket_override": 2,
+    "subject_key": "subject-694",
+    "subject_bucket_override": 1,
     "attributes": {},
     "expected_variation_key": "on",
     "expected_reason": "rule_match"
@@ -425,8 +425,8 @@
         {"variation_key": "off", "bucket_positions": 9995}
       ]}}
     ],
-    "subject_key": "subject-outside-canary-bucket",
-    "subject_bucket_override": 9999,
+    "subject_key": "subject-0",
+    "subject_bucket_override": 3974,
     "attributes": {},
     "expected_variation_key": "off",
     "expected_reason": "rule_match"
