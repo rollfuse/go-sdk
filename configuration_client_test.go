@@ -48,6 +48,7 @@ func TestConfigurationClient_StartResolvesOnFirstSuccess(t *testing.T) {
 	defer server.Close()
 
 	c := newConfigurationClient(server.URL, "cred", configurationClientOptions{
+		streamingDisabled: true,
 		onConfigRefreshed: func(v int64) { refreshedVersion.Store(v) },
 	})
 	defer c.close()
@@ -64,9 +65,15 @@ func TestConfigurationClient_StartResolvesOnFirstSuccess(t *testing.T) {
 		t.Fatalf("expected cached config version 3, got %+v", cfg)
 	}
 
-	if got := refreshedVersion.Load(); got != 3 {
-		t.Fatalf("expected onConfigRefreshed(3), got %d", got)
-	}
+	// start() only guarantees c.ready has closed (per sdk-conformance's
+	// "Readiness resolves before callbacks run" — readiness is not
+	// defined to wait for the callback too), and closing ready happens
+	// a couple of statements before attemptFetch invokes
+	// onConfigRefreshed — so a goroutine scheduled aggressively enough
+	// (observed reliably in CI, though not locally) can reach this
+	// assertion before that callback actually runs. Poll for it instead
+	// of asserting immediately.
+	waitFor(t, time.Second, func() bool { return refreshedVersion.Load() == 3 })
 }
 
 func TestConfigurationClient_MalformedResponseDoesNotReplaceCache(t *testing.T) {
@@ -90,6 +97,7 @@ func TestConfigurationClient_MalformedResponseDoesNotReplaceCache(t *testing.T) 
 	errCh := make(chan error, 10)
 
 	c := newConfigurationClient(server.URL, "cred", configurationClientOptions{
+		streamingDisabled:    true,
 		refreshInterval:      20 * time.Millisecond,
 		onConfigRefreshError: func(err error) { errCh <- err },
 	})
@@ -163,6 +171,7 @@ func TestConfigurationClient_MalformedElementDoesNotReplaceCache(t *testing.T) {
 	errCh := make(chan error, 10)
 
 	c := newConfigurationClient(server.URL, "cred", configurationClientOptions{
+		streamingDisabled:    true,
 		refreshInterval:      20 * time.Millisecond,
 		onConfigRefreshError: func(err error) { errCh <- err },
 	})
@@ -207,6 +216,7 @@ func TestConfigurationClient_RepeatedFailuresKeepLastKnownGood(t *testing.T) {
 	errCh := make(chan error, 10)
 
 	c := newConfigurationClient(server.URL, "cred", configurationClientOptions{
+		streamingDisabled:    true,
 		refreshInterval:      20 * time.Millisecond,
 		onConfigRefreshError: func(err error) { errCh <- err },
 	})
@@ -277,6 +287,7 @@ func TestConfigurationClient_HungConnectionIsAbandoned(t *testing.T) {
 	startedAt := time.Now()
 
 	c := newConfigurationClient(server.URL, "cred", configurationClientOptions{
+		streamingDisabled:    true,
 		requestTimeout:       50 * time.Millisecond,
 		onConfigRefreshError: func(err error) { errCh <- err },
 	})
@@ -328,7 +339,8 @@ func TestConfigurationClient_StartReturnsCtxErrIfNeverSucceeds(t *testing.T) {
 	defer server.Close()
 
 	c := newConfigurationClient(server.URL, "cred", configurationClientOptions{
-		refreshInterval: 20 * time.Millisecond,
+		streamingDisabled: true,
+		refreshInterval:   20 * time.Millisecond,
 	})
 	defer c.close()
 
@@ -364,7 +376,8 @@ func TestConfigurationClient_CredentialRejectionFailsFastWithoutRetry(t *testing
 			defer server.Close()
 
 			c := newConfigurationClient(server.URL, "svc_bogus.invalid", configurationClientOptions{
-				refreshInterval: 20 * time.Millisecond,
+				streamingDisabled: true,
+				refreshInterval:   20 * time.Millisecond,
 			})
 			defer c.close()
 
@@ -406,7 +419,7 @@ func TestConfigurationClient_IsStale(t *testing.T) {
 	defer server.Close()
 
 	t.Run("true before any successful fetch", func(t *testing.T) {
-		c := newConfigurationClient(server.URL, "cred", configurationClientOptions{})
+		c := newConfigurationClient(server.URL, "cred", configurationClientOptions{streamingDisabled: true})
 		defer c.close()
 
 		if !c.isStale() {
@@ -415,7 +428,7 @@ func TestConfigurationClient_IsStale(t *testing.T) {
 	})
 
 	t.Run("false without maxConfigAge, however old the cache", func(t *testing.T) {
-		c := newConfigurationClient(server.URL, "cred", configurationClientOptions{})
+		c := newConfigurationClient(server.URL, "cred", configurationClientOptions{streamingDisabled: true})
 		defer c.close()
 
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -433,7 +446,7 @@ func TestConfigurationClient_IsStale(t *testing.T) {
 	})
 
 	t.Run("respects maxConfigAge when set", func(t *testing.T) {
-		c := newConfigurationClient(server.URL, "cred", configurationClientOptions{maxConfigAge: 50 * time.Millisecond})
+		c := newConfigurationClient(server.URL, "cred", configurationClientOptions{maxConfigAge: 50 * time.Millisecond, streamingDisabled: true})
 		defer c.close()
 
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -472,7 +485,8 @@ func TestConfigurationClient_ConcurrentReadsDuringRefresh(t *testing.T) {
 	defer server.Close()
 
 	c := newConfigurationClient(server.URL, "cred", configurationClientOptions{
-		refreshInterval: time.Millisecond,
+		streamingDisabled: true,
+		refreshInterval:   time.Millisecond,
 	})
 	defer c.close()
 
@@ -542,6 +556,7 @@ func TestConfigurationClient_PanickingOnConfigRefreshedDoesNotCrash(t *testing.T
 	var callbackRan atomic.Bool
 
 	c := newConfigurationClient(server.URL, "cred", configurationClientOptions{
+		streamingDisabled: true,
 		onConfigRefreshed: func(int64) {
 			callbackRan.Store(true)
 			panic("integrator's success callback itself panics")
@@ -577,6 +592,7 @@ func TestConfigurationClient_PanickingOnConfigRefreshErrorDoesNotCrash(t *testin
 	var callbackCount atomic.Int64
 
 	c := newConfigurationClient(server.URL, "cred", configurationClientOptions{
+		streamingDisabled: true,
 		onConfigRefreshError: func(error) {
 			callbackCount.Add(1)
 			panic("integrator's error callback itself panics")
@@ -634,6 +650,7 @@ func TestConfigurationClient_PresentsETagAndAcceptsNotModified(t *testing.T) {
 	errCh := make(chan error, 10)
 
 	c := newConfigurationClient(server.URL, "cred", configurationClientOptions{
+		streamingDisabled:    true,
 		refreshInterval:      10 * time.Millisecond,
 		onConfigRefreshError: func(err error) { errCh <- err },
 	})
@@ -732,6 +749,7 @@ func TestConfigurationClient_HonorsAdvisedPollInterval(t *testing.T) {
 	defer server.Close()
 
 	c := newConfigurationClient(server.URL, "cred", configurationClientOptions{
+		streamingDisabled: true,
 		// No refreshInterval: falls back to the platform's advised 1s,
 		// not this package's own 30s default.
 	})
@@ -773,7 +791,8 @@ func TestConfigurationClient_ExplicitRefreshIntervalWinsOverAdvised(t *testing.T
 	defer server.Close()
 
 	c := newConfigurationClient(server.URL, "cred", configurationClientOptions{
-		refreshInterval: 500 * time.Millisecond, // explicit — wins over the advised 1s
+		streamingDisabled: true,
+		refreshInterval:   500 * time.Millisecond, // explicit — wins over the advised 1s
 	})
 	defer c.close()
 

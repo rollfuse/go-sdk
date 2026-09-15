@@ -61,6 +61,16 @@ cached, per ADR 0004. Exposures produced by a rule-matched evaluation are
 reported back to the platform asynchronously, in batches, without adding
 latency to the call that produced them.
 
+The client also attempts a streaming connection (Server-Sent Events)
+alongside its regular polling, so a Configuration change is typically
+learned about in seconds rather than waiting out the full poll interval.
+Streaming is purely an optimization layered on top of polling, which
+never stops: if a connection can't be established, is refused, or breaks
+silently, the client falls back to polling automatically with no effect
+on evaluation correctness. Call `client.Transport()` to check which
+transport is currently active, or `WithStreamingDisabled()` to opt out
+entirely.
+
 ## Configuration
 
 `NewClient(baseURL, credential string, opts ...Option)` accepts functional
@@ -78,6 +88,7 @@ options; all are optional:
 | `WithOnConfigRefreshError` | — | Called after each failed or invalid refresh |
 | `WithOnExposureDropped` | — | Called when exposures are dropped due to a full queue |
 | `WithOnExposureSubmitError` | — | Called when a batch of exposures fails to submit |
+| `WithStreamingDisabled` | streaming on | Never attempt a GET /v1/config/stream connection; poll only |
 
 ## Development
 
