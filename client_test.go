@@ -145,6 +145,59 @@ func TestClient_UnknownFlagKey(t *testing.T) {
 	}
 }
 
+// TestClient_NonEvaluableFlag_ServesFallback is expand-targeting-model
+// task 3.3/3.5's own verification: a flag the platform marks
+// non-evaluable (a construct newer than this client understands) MUST
+// serve the caller's fallback, never a value derived from a definition
+// this client was never shown.
+func TestClient_NonEvaluableFlag_ServesFallback(t *testing.T) {
+	nonEvaluable := rollfuse.FlagConfig{FlagKey: "future-flag", NonEvaluable: true}
+
+	server := testConfigurationServer(t, nonEvaluable, 1)
+	defer server.Close()
+
+	client, err := rollfuse.NewClient(server.URL, "cred")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer func() { _ = client.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := client.Start(ctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	_, err = client.Evaluate("user_1", "future-flag")
+	if !errors.Is(err, rollfuse.ErrFlagNotEvaluable) {
+		t.Fatalf("expected ErrFlagNotEvaluable with no fallback supplied, got %v", err)
+	}
+
+	result, err := client.Evaluate("user_1", "future-flag", rollfuse.WithFallback("caller-fallback"))
+	if err != nil {
+		t.Fatalf("unexpected error with fallback supplied: %v", err)
+	}
+
+	var value string
+	if err := json.Unmarshal(result.Value, &value); err != nil || value != "caller-fallback" {
+		t.Fatalf("expected caller-supplied fallback value, got %s (err=%v)", result.Value, err)
+	}
+
+	if result.Reason != rollfuse.ReasonDefaultFallback {
+		t.Fatalf("expected ReasonDefaultFallback, got %q", result.Reason)
+	}
+
+	all, err := client.EvaluateAll("user_1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(all) != 0 {
+		t.Fatalf("expected EvaluateAll to omit the non-evaluable flag entirely, got %+v", all)
+	}
+}
+
 func TestClient_FailureIsolation_KeepsServingAfterRefreshFailure(t *testing.T) {
 	var requestCount atomic.Int32
 

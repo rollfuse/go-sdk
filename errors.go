@@ -18,6 +18,17 @@ var ErrConfigNotReady = errors.New("rollfuse: configuration not yet available")
 // 404 for an unknown flag key) and no fallback was supplied.
 var ErrFlagNotFound = errors.New("rollfuse: flag not found in the cached configuration")
 
+// ErrFlagNotEvaluable is returned by Evaluate when flagKey uses a
+// configuration construct newer than this client's own clientFormatVersion
+// declares support for (the platform marks such a flag
+// FlagConfig.NonEvaluable and withholds its Rules/Variations). This
+// client version needs an upgrade to evaluate it — per
+// expand-targeting-model task 3.3, the caller's own fallback is served
+// when one is supplied, exactly like ErrFlagNotFound, since there is no
+// legitimate default value this client can derive for a flag definition
+// it was never shown.
+var ErrFlagNotEvaluable = errors.New("rollfuse: flag requires a newer client to evaluate")
+
 // ErrCredentialRejected is returned (wrapped, with the rejecting status
 // code) by Start when GET /v1/config answers 401 or 403: retrying a
 // rejected credential can only ever reproduce the same rejection, so the

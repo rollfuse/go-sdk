@@ -91,15 +91,31 @@ func (r Rule) matches(attributes map[string]string) bool {
 	return true
 }
 
+// clientFormatVersion is the highest configuration format version this
+// package can evaluate — declared to the platform on every GET /v1/config
+// request via configuration_client.go's X-Rollfuse-Client-Format-Version
+// header, per expand-targeting-model task 3.1. Bump this only alongside
+// actually implementing whatever new construct the next format version
+// introduces (task 3.5: this client must never evaluate a construct it
+// does not support).
+const clientFormatVersion = 1
+
 // FlagConfig is one FeatureFlag's per-Environment view: whether it is
 // enabled, its default Variation, its ordered Rules, and the full set of
 // Variations rule outcomes may reference.
+//
+// NonEvaluable is true when the platform withheld Rules/Variations
+// because this flag uses a construct newer than clientFormatVersion (see
+// expand-targeting-model task 3.3) — evaluate() serves the caller's own
+// fallback for such a flag rather than treating an empty Rules/Variations
+// as "no targeting configured," which would silently mis-evaluate it.
 type FlagConfig struct {
 	FlagKey          string      `json:"flag_key"`
 	Enabled          bool        `json:"enabled"`
 	DefaultVariation string      `json:"default_variation"`
 	Variations       []Variation `json:"variations"`
 	Rules            []Rule      `json:"rules"`
+	NonEvaluable     bool        `json:"non_evaluable"`
 }
 
 func (f FlagConfig) hasVariation(key string) bool {
