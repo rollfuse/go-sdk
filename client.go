@@ -130,18 +130,44 @@ func WithOnExposureSubmitError(fn func(err error)) Option {
 // evaluateOptions accumulates every EvaluateOption. EvaluateAll ignores
 // fallback (no per-flag fallback concept for "evaluate everything").
 type evaluateOptions struct {
-	attributes  map[string]string
-	fallback    any
-	hasFallback bool
+	attributes      map[string]string
+	typedAttributes map[string]AttributeValue
+	fallback        any
+	hasFallback     bool
 }
 
 // EvaluateOption configures a single Evaluate/EvaluateAll call.
 type EvaluateOption func(*evaluateOptions)
 
 // WithAttributes supplies the subject attributes rule conditions match
-// against.
+// against, as plain strings — each becomes a string-typed
+// AttributeValue, so only a string-typed clause (equality, membership, a
+// string operator) can ever match one. Use WithTypedAttributes for a
+// number, boolean or list attribute (expand-targeting-model section 4).
 func WithAttributes(attrs map[string]string) EvaluateOption {
 	return func(o *evaluateOptions) { o.attributes = attrs }
+}
+
+// WithTypedAttributes supplies subject attributes carrying their real
+// type — string, number, boolean or list — via StringAttr/NumberAttr/
+// BoolAttr/ListAttr, so an ordered-comparison, membership-on-a-list or
+// boolean-equality clause can match correctly (expand-targeting-model
+// section 4). Takes precedence over WithAttributes if both are given in
+// the same call, since a typed value is always the more specific intent.
+func WithTypedAttributes(attrs map[string]AttributeValue) EvaluateOption {
+	return func(o *evaluateOptions) { o.typedAttributes = attrs }
+}
+
+// resolvedAttributes merges WithAttributes and WithTypedAttributes into
+// the single typed map EvaluateFlagTyped consumes, with a typed entry
+// winning over a same-named string entry.
+func (o evaluateOptions) resolvedAttributes() map[string]AttributeValue {
+	resolved := stringAttributesToTyped(o.attributes)
+	for name, value := range o.typedAttributes {
+		resolved[name] = value
+	}
+
+	return resolved
 }
 
 // WithFallback supplies the value Evaluate returns (reason
@@ -333,7 +359,7 @@ func (c *Client) Evaluate(subjectKey, flagKey string, opts ...EvaluateOption) (E
 		return EvaluationResult{}, ErrFlagNotEvaluable
 	}
 
-	result := EvaluateFlag(*flag, cfg.Version, subjectKey, o.attributes)
+	result := EvaluateFlagTyped(*flag, cfg.Version, subjectKey, o.resolvedAttributes())
 	c.trackExposure(subjectKey, result)
 
 	return result, nil
@@ -370,7 +396,7 @@ func (c *Client) EvaluateAll(subjectKey string, opts ...EvaluateOption) ([]Evalu
 			continue
 		}
 
-		result := EvaluateFlag(flag, cfg.Version, subjectKey, o.attributes)
+		result := EvaluateFlagTyped(flag, cfg.Version, subjectKey, o.resolvedAttributes())
 		c.trackExposure(subjectKey, result)
 		results = append(results, result)
 	}

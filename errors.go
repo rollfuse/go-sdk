@@ -35,3 +35,8 @@ var ErrFlagNotEvaluable = errors.New("rollfuse: flag requires a newer client to 
 // configuration client fails immediately and permanently instead of
 // retrying with backoff forever (task 2.2). Match it with errors.Is.
 var ErrCredentialRejected = errors.New("rollfuse: credential was rejected by the platform")
+
+// ErrRegexPatternUnbounded is returned by ValidateBoundedRegex when a
+// pattern is not in the bounded RE2-safe subset expand-targeting-model's
+// "A Clause Supports Operators Beyond Equality" requirement mandates.
+var ErrRegexPatternUnbounded = errors.New("rollfuse: regex pattern is not in the bounded RE2-safe subset")
