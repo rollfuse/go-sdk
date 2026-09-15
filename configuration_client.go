@@ -46,6 +46,10 @@ type configurationClientOptions struct {
 	httpClient           *http.Client
 	onConfigRefreshed    func(version int64)
 	onConfigRefreshError func(err error)
+	// streamingDisabled, when true, means streamLoop is never launched at
+	// all (task 5.8) — not merely ignored if it connects: no request to
+	// GET /v1/config/stream is ever attempted.
+	streamingDisabled bool
 }
 
 // configurationClient fetches, caches and background-refreshes a
@@ -116,6 +120,34 @@ type configurationClient struct {
 	// GET /v1/config would fail identically, so retrying is pure waste
 	// (and, unlike an ordinary transient failure, never self-heals).
 	terminallyFailed atomic.Bool
+
+	// streamingDisabled mirrors configurationClientOptions.streamingDisabled
+	// (task 5.8).
+	streamingDisabled bool
+	// streamConnected reports whether a GET /v1/config/stream connection
+	// is currently live — read by currentRefreshInterval (task 5.4) and
+	// by Client.Transport (task 5.7).
+	streamConnected atomic.Bool
+	// streamPollIntervalSeconds is the reduced poll interval the most
+	// recent hello event disclosed, valid only while streamConnected is
+	// true (currentRefreshInterval never reads it otherwise). 0 while
+	// disconnected.
+	streamPollIntervalSeconds atomic.Int64
+	// streamHighestNotified is the highest Configuration Version this
+	// client has ever been notified about via a version event — see
+	// considerVersionNotification's own doc comment (tasks 5.5/5.6).
+	streamHighestNotified atomic.Int64
+	// streamLastFrameAt is UnixNano of the last frame (heartbeat or
+	// version) received on the current stream connection — watched by
+	// watchForStaleConnection to detect a silently broken connection
+	// (task 5.3).
+	streamLastFrameAt atomic.Int64
+	// streamFetchTrigger wakes pollLoop to fetch immediately instead of
+	// waiting for its next scheduled tick, sent to by
+	// considerVersionNotification. Buffered 1: a pending trigger already
+	// queued makes a second one redundant (pollLoop will observe the
+	// latest version regardless of how many times it was signaled).
+	streamFetchTrigger chan struct{}
 }
 
 func newConfigurationClient(baseURL, credential string, opts configurationClientOptions) *configurationClient {
@@ -138,20 +170,32 @@ func newConfigurationClient(baseURL, credential string, opts configurationClient
 		httpClient:              httpClient,
 		onConfigRefreshed:       opts.onConfigRefreshed,
 		onConfigRefreshError:    opts.onConfigRefreshError,
+		streamingDisabled:       opts.streamingDisabled,
 		backoff:                 baseBackoff,
 		ready:                   make(chan struct{}),
+		streamFetchTrigger:      make(chan struct{}, 1),
 	}
 }
 
 // currentRefreshInterval resolves the delay between successful polls
-// (task 9.3): an explicitly configured WithRefreshInterval always wins;
-// otherwise the platform's advised Configuration.PollIntervalSeconds
+// (task 9.3): an explicitly configured WithRefreshInterval always wins.
+// Otherwise, while a streaming connection is live, the reduced poll
+// interval its own hello event disclosed wins (task 5.4 — the platform
+// advises a shorter floor specifically because a connected client already
+// has a faster primary signal and only needs polling as a safety net).
+// With neither, the platform's advised Configuration.PollIntervalSeconds
 // (from the most recently fetched Configuration, including one only
 // confirmed unchanged via a 304) wins over this package's own hardcoded
 // default.
 func (c *configurationClient) currentRefreshInterval() time.Duration {
 	if c.explicitRefreshInterval > 0 {
 		return c.explicitRefreshInterval
+	}
+
+	if c.streamConnected.Load() {
+		if secs := c.streamPollIntervalSeconds.Load(); secs > 0 {
+			return time.Duration(secs) * time.Second
+		}
 	}
 
 	if cfg := c.config.Load(); cfg != nil && cfg.PollIntervalSeconds > 0 {
@@ -178,6 +222,12 @@ func (c *configurationClient) start(ctx context.Context) error {
 		c.wg.Add(1)
 
 		go c.pollLoop(lifecycleCtx)
+
+		if !c.streamingDisabled {
+			c.wg.Add(1)
+
+			go c.streamLoop(lifecycleCtx)
+		}
 	}
 
 	lifecycleCtx := c.lifecycleCtx
@@ -287,6 +337,11 @@ func (c *configurationClient) pollLoop(ctx context.Context) {
 
 			return
 		case <-timer.C:
+		case <-c.streamFetchTrigger:
+			// A streaming connection learned of a genuinely newer
+			// version (considerVersionNotification) — fetch now instead
+			// of waiting out the rest of this tick (task 5.5).
+			timer.Stop()
 		}
 	}
 }

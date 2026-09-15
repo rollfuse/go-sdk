@@ -28,6 +28,7 @@ type clientConfig struct {
 	onConfigRefreshError  func(err error)
 	onExposureDropped     func(count int)
 	onExposureSubmitError func(err error)
+	streamingDisabled     bool
 }
 
 // Option configures a Client, passed to NewClient.
@@ -127,6 +128,18 @@ func WithOnExposureSubmitError(fn func(err error)) Option {
 	return func(cfg *clientConfig) { cfg.onExposureSubmitError = fn }
 }
 
+// WithStreamingDisabled turns off the GET /v1/config/stream consumer
+// entirely (add-configuration-streaming task 5.8): no connection is ever
+// attempted, and the Client relies solely on polling at
+// Configuration.PollIntervalSeconds (or WithRefreshInterval, if set) —
+// identical to this Client's behavior before streaming existed. Streaming
+// is always attempted by default; this exists for an integrator who wants
+// to opt out (e.g. a runtime where a long-lived HTTP connection is
+// unsupported or undesirable).
+func WithStreamingDisabled() Option {
+	return func(cfg *clientConfig) { cfg.streamingDisabled = true }
+}
+
 // evaluateOptions accumulates every EvaluateOption. EvaluateAll ignores
 // fallback (no per-flag fallback concept for "evaluate everything").
 type evaluateOptions struct {
@@ -220,10 +233,11 @@ func NewClient(baseURL, credential string, opts ...Option) (*Client, error) {
 	}
 
 	client.configClient = newConfigurationClient(baseURL, credential, configurationClientOptions{
-		refreshInterval: cfg.refreshInterval,
-		maxConfigAge:    cfg.maxConfigAge,
-		requestTimeout:  cfg.requestTimeout,
-		httpClient:      cfg.httpClient,
+		refreshInterval:   cfg.refreshInterval,
+		maxConfigAge:      cfg.maxConfigAge,
+		requestTimeout:    cfg.requestTimeout,
+		httpClient:        cfg.httpClient,
+		streamingDisabled: cfg.streamingDisabled,
 		onConfigRefreshed: func(version int64) {
 			if cfg.onConfigRefreshed != nil {
 				cfg.onConfigRefreshed(version)
@@ -265,6 +279,27 @@ func (c *Client) Subscribe(listener func()) (unsubscribe func()) {
 		delete(c.configChangeListeners, id)
 		c.listenersMu.Unlock()
 	}
+}
+
+// TransportInfo reports which mechanism is currently delivering
+// Configuration changes to this Client (add-configuration-streaming task
+// 5.7's diagnostic path). Streaming is always an optimization layered on
+// top of polling, never a replacement for it (design.md's "Polling
+// continues while connected" decision) — Streaming reports whether that
+// optimization is currently live; polling itself never stops regardless
+// of its value.
+type TransportInfo struct {
+	// Streaming is true while a GET /v1/config/stream connection is
+	// currently established. False before the first connection attempt
+	// completes, while reconnecting after a break, or when
+	// WithStreamingDisabled was supplied to NewClient.
+	Streaming bool
+}
+
+// Transport reports this Client's current TransportInfo. Safe for
+// concurrent use, like every other Client method.
+func (c *Client) Transport() TransportInfo {
+	return TransportInfo{Streaming: c.configClient.streamConnected.Load()}
 }
 
 func (c *Client) notifyConfigChange() {

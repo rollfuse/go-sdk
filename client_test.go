@@ -68,7 +68,7 @@ func TestClient_SafeFallback_NoCacheYetWithFallback(t *testing.T) {
 	server := testConfigurationServer(t, matchedFlag(), 1)
 	defer server.Close()
 
-	client, err := rollfuse.NewClient(server.URL, "cred")
+	client, err := rollfuse.NewClient(server.URL, "cred", rollfuse.WithStreamingDisabled())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestClient_SafeFallback_NoCacheYetNoFallback(t *testing.T) {
 	server := testConfigurationServer(t, matchedFlag(), 1)
 	defer server.Close()
 
-	client, err := rollfuse.NewClient(server.URL, "cred")
+	client, err := rollfuse.NewClient(server.URL, "cred", rollfuse.WithStreamingDisabled())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestClient_EvaluateAll_NoCacheYet(t *testing.T) {
 	server := testConfigurationServer(t, matchedFlag(), 1)
 	defer server.Close()
 
-	client, err := rollfuse.NewClient(server.URL, "cred")
+	client, err := rollfuse.NewClient(server.URL, "cred", rollfuse.WithStreamingDisabled())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestClient_UnknownFlagKey(t *testing.T) {
 	server := testConfigurationServer(t, matchedFlag(), 1)
 	defer server.Close()
 
-	client, err := rollfuse.NewClient(server.URL, "cred")
+	client, err := rollfuse.NewClient(server.URL, "cred", rollfuse.WithStreamingDisabled())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestClient_NonEvaluableFlag_ServesFallback(t *testing.T) {
 	server := testConfigurationServer(t, nonEvaluable, 1)
 	defer server.Close()
 
-	client, err := rollfuse.NewClient(server.URL, "cred")
+	client, err := rollfuse.NewClient(server.URL, "cred", rollfuse.WithStreamingDisabled())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -226,7 +226,7 @@ func TestClient_FailureIsolation_KeepsServingAfterRefreshFailure(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := rollfuse.NewClient(server.URL, "cred", rollfuse.WithRefreshInterval(20*time.Millisecond))
+	client, err := rollfuse.NewClient(server.URL, "cred", rollfuse.WithStreamingDisabled(), rollfuse.WithRefreshInterval(20*time.Millisecond))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -268,7 +268,7 @@ func TestClient_Evaluate_DoesNotPerformNetworkRequest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := rollfuse.NewClient(server.URL, "cred")
+	client, err := rollfuse.NewClient(server.URL, "cred", rollfuse.WithStreamingDisabled())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -321,7 +321,7 @@ func TestClient_ExposureReporting_EnqueuesAndSubmitsRuleMatch(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := rollfuse.NewClient(server.URL, "cred", rollfuse.WithExposureBatchSize(1))
+	client, err := rollfuse.NewClient(server.URL, "cred", rollfuse.WithStreamingDisabled(), rollfuse.WithExposureBatchSize(1))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -394,7 +394,7 @@ func TestClient_ExposureReporting_DefaultResultNeverEnqueues(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := rollfuse.NewClient(server.URL, "cred", rollfuse.WithExposureBatchSize(1))
+	client, err := rollfuse.NewClient(server.URL, "cred", rollfuse.WithStreamingDisabled(), rollfuse.WithExposureBatchSize(1))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -433,6 +433,7 @@ func TestClient_ExposureReporting_FullQueueDropsAndReports(t *testing.T) {
 
 	client, err := rollfuse.NewClient(
 		server.URL, "cred",
+		rollfuse.WithStreamingDisabled(),
 		rollfuse.WithExposureQueueCapacity(1),
 		rollfuse.WithExposureBatchSize(1_000_000), // never auto-flush during this test
 		rollfuse.WithOnExposureDropped(func(n int) { dropped.Add(int32(n)) }),
@@ -495,6 +496,7 @@ func TestClient_ExposureReporting_SubmitFailureDoesNotAffectPastResult(t *testin
 
 	client, err := rollfuse.NewClient(
 		server.URL, "cred",
+		rollfuse.WithStreamingDisabled(),
 		rollfuse.WithExposureBatchSize(1),
 		rollfuse.WithOnExposureSubmitError(func(err error) { submitErrCh <- err }),
 	)
@@ -536,7 +538,7 @@ func TestClient_ConcurrentEvaluate(t *testing.T) {
 	server := testConfigurationServer(t, matchedFlag(), 1)
 	defer server.Close()
 
-	client, err := rollfuse.NewClient(server.URL, "cred", rollfuse.WithRefreshInterval(5*time.Millisecond))
+	client, err := rollfuse.NewClient(server.URL, "cred", rollfuse.WithStreamingDisabled(), rollfuse.WithRefreshInterval(5*time.Millisecond))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -613,7 +615,7 @@ func TestClient_Stop_ResumesOnRestart(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := rollfuse.NewClient(server.URL, "cred", rollfuse.WithRefreshInterval(20*time.Millisecond))
+	client, err := rollfuse.NewClient(server.URL, "cred", rollfuse.WithStreamingDisabled(), rollfuse.WithRefreshInterval(20*time.Millisecond))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -711,6 +713,7 @@ func TestClient_Close_BoundedByCloseTimeout(t *testing.T) {
 
 	client, err := rollfuse.NewClient(
 		server.URL, "cred",
+		rollfuse.WithStreamingDisabled(),
 		rollfuse.WithCloseTimeout(100*time.Millisecond),
 		rollfuse.WithExposureBatchSize(1_000_000), // never auto-flush before Close() itself triggers it
 	)
@@ -777,6 +780,7 @@ func TestClient_Subscribe_NotifiesOnConfigChange(t *testing.T) {
 
 	client, err := rollfuse.NewClient(
 		server.URL, "cred",
+		rollfuse.WithStreamingDisabled(),
 		rollfuse.WithRefreshInterval(20*time.Millisecond),
 		rollfuse.WithOnConfigRefreshed(func(int64) { ownCallbackCount.Add(1) }),
 	)
