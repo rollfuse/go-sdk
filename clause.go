@@ -328,3 +328,157 @@ func ValidateBoundedRegex(pattern string) error {
 
 	return nil
 }
+
+// MaxClauseNestingDepth is expand-targeting-model task 1.2's bound
+// decision (testdata/README.md: "nesting depth 5"), enforced here as a
+// defensive fail-safe against a ClauseTree deeper than authoring should
+// ever have allowed to be persisted — mirrors
+// apps/api/internal/evaluation/domain/clause.go's own
+// MaxClauseNestingDepth (independent implementation, same bound).
+const MaxClauseNestingDepth = 5
+
+// ClauseTreeOp discriminates a ClauseTree node's shape.
+type ClauseTreeOp string
+
+const (
+	ClauseTreeLeaf ClauseTreeOp = "leaf"
+	ClauseTreeAnd  ClauseTreeOp = "and"
+	ClauseTreeOr   ClauseTreeOp = "or"
+	ClauseTreeNot  ClauseTreeOp = "not"
+)
+
+// ClauseTree is a rule condition: a single leaf Clause, or a group of
+// child ClauseTrees combined with AND/OR, or a negation of exactly one
+// child — environment-flag-targeting's "Clauses Compose With AND, OR And
+// Negation" requirement. Groups nest to MaxClauseNestingDepth.
+type ClauseTree struct {
+	Op       ClauseTreeOp
+	Leaf     Clause
+	Children []ClauseTree
+}
+
+// wireClauseTree decodes the fixture/wire clause-tree shape (testdata/
+// README.md): a leaf clause has one of the enumerated ClauseOp values
+// directly on "op"; "and"/"or" carry "clauses"; "not" carries a single
+// "clause"; "segment" (section 7, not implemented by this package yet)
+// decodes to an always-non-matching leaf rather than failing the whole
+// unmarshal, per feature-evaluation's "A Malformed Or Unsupported
+// Construct Fails Safe" requirement.
+type wireClauseTree struct {
+	Op         string            `json:"op"`
+	Clauses    []json.RawMessage `json:"clauses,omitempty"`
+	Clause     json.RawMessage   `json:"clause,omitempty"`
+	SegmentKey string            `json:"segment_key,omitempty"`
+}
+
+// UnmarshalJSON implements ClauseTree's decode from the wire shape above.
+func (t *ClauseTree) UnmarshalJSON(data []byte) error {
+	var w wireClauseTree
+	if err := json.Unmarshal(data, &w); err != nil {
+		return err
+	}
+
+	switch ClauseTreeOp(w.Op) {
+	case ClauseTreeAnd, ClauseTreeOr:
+		t.Op = ClauseTreeOp(w.Op)
+		t.Children = make([]ClauseTree, 0, len(w.Clauses))
+
+		for _, raw := range w.Clauses {
+			var child ClauseTree
+			if err := json.Unmarshal(raw, &child); err != nil {
+				return err
+			}
+
+			t.Children = append(t.Children, child)
+		}
+
+		return nil
+	case ClauseTreeNot:
+		t.Op = ClauseTreeNot
+
+		var child ClauseTree
+		if len(w.Clause) > 0 && string(w.Clause) != "null" {
+			if err := json.Unmarshal(w.Clause, &child); err != nil {
+				return err
+			}
+		}
+
+		t.Children = []ClauseTree{child}
+
+		return nil
+	case "segment":
+		// Segment-membership clauses are reusable-segments/section 7's
+		// job. Until this package implements them, a segment clause
+		// fails safe as a leaf that never matches, rather than aborting
+		// decode of the whole rule.
+		t.Op = ClauseTreeLeaf
+		t.Leaf = Clause{Op: "unsupported_segment_clause"}
+
+		return nil
+	default:
+		// A leaf: decode the whole payload as a Clause directly (Clause
+		// already knows how to read {"op","attribute","type","value"}).
+		t.Op = ClauseTreeLeaf
+
+		return json.Unmarshal(data, &t.Leaf)
+	}
+}
+
+// Match reports whether attributes satisfies this ClauseTree, recursively.
+// Negating a "present" leaf naturally implements the spec's "explicit
+// negated presence test" with no special-casing: OpPresent returns false
+// for an absent attribute, and Not inverts that to true.
+//
+// depth is the caller's own nesting level (0 for the tree's root).
+// Exceeding MaxClauseNestingDepth fails safe (non-matching, no
+// diagnostic — a defensive bound, not an operator-authored condition).
+func (t ClauseTree) Match(attributes map[string]AttributeValue, depth int) (matched bool, diagnostic string) {
+	if depth > MaxClauseNestingDepth {
+		return false, ""
+	}
+
+	switch t.Op {
+	case ClauseTreeLeaf:
+		return t.Leaf.Match(attributes)
+	case ClauseTreeNot:
+		if len(t.Children) != 1 {
+			return false, ""
+		}
+
+		childMatched, childDiagnostic := t.Children[0].Match(attributes, depth+1)
+
+		return !childMatched, childDiagnostic
+	case ClauseTreeAnd:
+		var diagnostic string
+
+		for _, child := range t.Children {
+			childMatched, childDiagnostic := child.Match(attributes, depth+1)
+			if childDiagnostic != "" {
+				diagnostic = childDiagnostic
+			}
+
+			if !childMatched {
+				return false, diagnostic
+			}
+		}
+
+		return true, diagnostic
+	case ClauseTreeOr:
+		var diagnostic string
+
+		for _, child := range t.Children {
+			childMatched, childDiagnostic := child.Match(attributes, depth+1)
+			if childDiagnostic != "" {
+				diagnostic = childDiagnostic
+			}
+
+			if childMatched {
+				return true, diagnostic
+			}
+		}
+
+		return false, diagnostic
+	default:
+		return false, ""
+	}
+}

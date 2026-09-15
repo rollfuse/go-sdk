@@ -80,7 +80,7 @@ func TestRolloutOutcome_GoldenVectors(t *testing.T) {
 	for _, v := range vectors {
 		flag := v.buildFlagConfig()
 
-		result := rollfuse.EvaluateFlag(flag, 1, v.SubjectKey, nil)
+		result := rollfuse.EvaluateFlag(nil, flag, 1, v.SubjectKey, nil)
 
 		if v.ExpectedVariationKey == nil {
 			if result.Reason != rollfuse.ReasonDefaultFallback {
