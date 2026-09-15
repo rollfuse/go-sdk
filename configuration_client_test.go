@@ -65,9 +65,15 @@ func TestConfigurationClient_StartResolvesOnFirstSuccess(t *testing.T) {
 		t.Fatalf("expected cached config version 3, got %+v", cfg)
 	}
 
-	if got := refreshedVersion.Load(); got != 3 {
-		t.Fatalf("expected onConfigRefreshed(3), got %d", got)
-	}
+	// start() only guarantees c.ready has closed (per sdk-conformance's
+	// "Readiness resolves before callbacks run" — readiness is not
+	// defined to wait for the callback too), and closing ready happens
+	// a couple of statements before attemptFetch invokes
+	// onConfigRefreshed — so a goroutine scheduled aggressively enough
+	// (observed reliably in CI, though not locally) can reach this
+	// assertion before that callback actually runs. Poll for it instead
+	// of asserting immediately.
+	waitFor(t, time.Second, func() bool { return refreshedVersion.Load() == 3 })
 }
 
 func TestConfigurationClient_MalformedResponseDoesNotReplaceCache(t *testing.T) {
