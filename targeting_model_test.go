@@ -430,19 +430,202 @@ func TestTargetingModel_CompositionVectors(t *testing.T) {
 	}
 }
 
+func (v targetingModelVector) isSegmentScope() bool {
+	return presentAndNonEmpty(v.Segments)
+}
+
+// wantSegmentVectorsPassing is exactly the fixture's 3 segment-membership
+// vectors.
+const wantSegmentVectorsPassing = 3
+
+// segmentVector mirrors one entry of the fixture's top-level "segments"
+// map: a named Segment's own raw clause, in the identical wire shape a
+// Rule's own clause uses.
+type segmentVector struct {
+	Clause json.RawMessage `json:"clause"`
+}
+
+// resolvableClause locally mirrors ClauseTree's own private wireClauseTree
+// (clause.go) — this package's exported ClauseTree has no segment-
+// resolution capability of its own (see its UnmarshalJSON's "segment"
+// case, an always-non-matching fail-safe leaf), so this type exists only
+// here, to let resolveSegmentClause manipulate the wire shape before
+// ClauseTree ever decodes it.
+type resolvableClause struct {
+	Op         string            `json:"op"`
+	Clauses    []json.RawMessage `json:"clauses,omitempty"`
+	Clause     json.RawMessage   `json:"clause,omitempty"`
+	SegmentKey string            `json:"segment_key,omitempty"`
+}
+
+// resolveSegmentClause substitutes every {"op":"segment","segment_key":…}
+// node, recursively, with the referenced segment's own raw clause —
+// mirroring apps/api's domain.ResolveSegments exactly, standing in here
+// for what the platform already does server-side before this client
+// ever sees a Rule's condition. expand-targeting-model task 7.7: this is
+// what lets the fixture's 3 segment-membership vectors run through this
+// client's real EvaluateFlagTyped entry point at all, proving (not
+// merely reasoning about) that this client evaluates a segment-
+// membership Rule identically to the platform.
+func resolveSegmentClause(t *testing.T, raw json.RawMessage, segments map[string]segmentVector) json.RawMessage {
+	t.Helper()
+
+	if len(raw) == 0 || string(raw) == "null" {
+		return raw
+	}
+
+	var probe resolvableClause
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		t.Fatalf("decode clause for segment resolution: %v", err)
+	}
+
+	switch probe.Op {
+	case "segment":
+		segment, ok := segments[probe.SegmentKey]
+		if !ok {
+			t.Fatalf("fixture error: unknown segment %q", probe.SegmentKey)
+		}
+
+		return resolveSegmentClause(t, segment.Clause, segments)
+	case "and", "or":
+		resolvedChildren := make([]json.RawMessage, 0, len(probe.Clauses))
+		for _, child := range probe.Clauses {
+			resolvedChildren = append(resolvedChildren, resolveSegmentClause(t, child, segments))
+		}
+
+		out, err := json.Marshal(struct {
+			Op      string            `json:"op"`
+			Clauses []json.RawMessage `json:"clauses"`
+		}{Op: probe.Op, Clauses: resolvedChildren})
+		if err != nil {
+			t.Fatalf("re-encode resolved clause: %v", err)
+		}
+
+		return out
+	case "not":
+		resolvedChild := resolveSegmentClause(t, probe.Clause, segments)
+
+		out, err := json.Marshal(struct {
+			Op     string          `json:"op"`
+			Clause json.RawMessage `json:"clause"`
+		}{Op: "not", Clause: resolvedChild})
+		if err != nil {
+			t.Fatalf("re-encode resolved clause: %v", err)
+		}
+
+		return out
+	default:
+		return raw
+	}
+}
+
+// buildSegmentResolvedFlagConfig is buildFullFlagConfig's segment-scope
+// counterpart: resolves every Rule's clause through resolveSegmentClause
+// before decoding it as a ClauseTree, so a segment-membership vector
+// runs through the exact same evaluation path a resolved (platform-
+// served) Configuration would.
+func (v targetingModelVector) buildSegmentResolvedFlagConfig(t *testing.T) rollfuse.FlagConfig {
+	t.Helper()
+
+	var segments map[string]segmentVector
+	if err := json.Unmarshal(v.Segments, &segments); err != nil {
+		t.Fatalf("decode segments: %v", err)
+	}
+
+	variations := make([]rollfuse.Variation, 0, len(v.Variations))
+	for _, variation := range v.Variations {
+		variations = append(variations, rollfuse.Variation{Key: variation.Key, Value: json.RawMessage(`null`)})
+	}
+
+	rules := make([]rollfuse.Rule, 0, len(v.Rules))
+
+	for _, rule := range v.Rules {
+		var condition *rollfuse.ClauseTree
+
+		if len(rule.Clause) > 0 && string(rule.Clause) != "null" {
+			resolved := resolveSegmentClause(t, rule.Clause, segments)
+
+			var tree rollfuse.ClauseTree
+			if err := json.Unmarshal(resolved, &tree); err != nil {
+				t.Fatalf("decode resolved clause tree: %v", err)
+			}
+
+			condition = &tree
+		}
+
+		rules = append(rules, rollfuse.Rule{
+			Condition: condition,
+			Outcome:   rollfuse.Outcome{VariationKey: rule.Outcome.VariationKey},
+		})
+	}
+
+	return rollfuse.FlagConfig{
+		FlagKey:          v.FlagKey,
+		Enabled:          true,
+		DefaultVariation: v.DefaultVariationKey,
+		Rules:            rules,
+		Variations:       variations,
+	}
+}
+
+// TestTargetingModel_SegmentVectors closes expand-targeting-model task
+// 7.7's own gap: proves, rather than only reasoning about structurally,
+// that this client evaluates a segment-membership Rule identically to
+// the platform, by resolving the fixture's raw segment reference exactly
+// as the platform's own domain.ResolveSegments does, then running the
+// result through EvaluateFlagTyped, the same public entry point every
+// other vector in this file goes through.
+func TestTargetingModel_SegmentVectors(t *testing.T) {
+	data, err := os.ReadFile(targetingModelVectorsPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", targetingModelVectorsPath, err)
+	}
+
+	var vectors []targetingModelVector
+	if err := json.Unmarshal(data, &vectors); err != nil {
+		t.Fatalf("unmarshal %s: %v", targetingModelVectorsPath, err)
+	}
+
+	ran := 0
+
+	for _, vector := range vectors {
+		if !vector.isSegmentScope() {
+			continue
+		}
+
+		ran++
+		vector := vector
+
+		t.Run(vector.Description, func(t *testing.T) {
+			flag := vector.buildSegmentResolvedFlagConfig(t)
+			attributes := vector.buildAttributes(t)
+
+			result := rollfuse.EvaluateFlagTyped(nil, flag, 1, vector.SubjectKey, attributes)
+
+			if result.VariationKey != vector.ExpectedVariationKey {
+				t.Errorf("variation key = %q, want %q", result.VariationKey, vector.ExpectedVariationKey)
+			}
+
+			if string(result.Reason) != vector.ExpectedReason {
+				t.Errorf("reason = %q, want %q", result.Reason, vector.ExpectedReason)
+			}
+		})
+	}
+
+	if ran != wantSegmentVectorsPassing {
+		t.Fatalf("ran %d segment vectors, want exactly %d (fixture shape changed)", ran, wantSegmentVectorsPassing)
+	}
+}
+
 // isRolloutScope reports whether this vector is a fractional-rollout
 // vector (task 2/8.5's own construct) that neither
 // TestTargetingModel_SingleLeafClauseVectors nor
 // TestTargetingModel_CompositionVectors covers, since both explicitly
-// exclude a rollout outcome. Unlike apps/api's own equivalent
-// isRolloutOrSegmentScope, this deliberately does NOT include the
-// fixture's 3 segment-membership vectors: this package has no
-// ClauseTreeSegment op at all (reusable-segments' own "Segment
-// Membership Is Resolved Consistently For Every Client" requirement is
-// met structurally — the platform never ships an unresolved segment
-// reference to any client, so there is nothing for this client to
-// resolve, see expand-targeting-model task 7.7's own finding), so those
-// 3 vectors are genuinely not this client's scope to run, not a gap.
+// exclude a rollout outcome. This deliberately does NOT include the
+// fixture's 3 segment-membership vectors — those are
+// TestTargetingModel_SegmentVectors' own scope, run separately above
+// (each is a single-variation outcome, not a rollout, so this exclusion
+// is a category boundary, not a gap).
 func (v targetingModelVector) isRolloutScope() bool {
 	if presentAndNonEmpty(v.Segments) {
 		return false
